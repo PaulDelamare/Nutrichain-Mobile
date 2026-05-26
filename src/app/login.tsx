@@ -76,7 +76,7 @@ export default function LoginScreen() {
         text2: 'Bienvenue sur NutriChain. Redirection…',
         visibilityTime: 1800,
       });
-      setTimeout(() => router.replace('/dashboard'), 1900);
+      setTimeout(() => router.replace('/(tabs)'), 1900);
     } catch (err) {
       Toast.show({
         type: 'error',

@@ -26,6 +26,12 @@
     "plugins": [
       "expo-router",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "NutriChain a besoin d'accéder à votre caméra pour scanner les lots (codes-barres, SSCC, datamatrix)."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#208AEF",

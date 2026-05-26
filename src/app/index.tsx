@@ -22,9 +22,14 @@ export default function Index() {
     );
   }
 
-  return <Redirect href={authenticated ? '/dashboard' : '/login'} />;
+  return <Redirect href={authenticated ? '/(tabs)' : '/login'} />;
 }
 
 const styles = StyleSheet.create({
-  loader: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0F3D36' },
+  loader: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0F3D36',
+  },
 });
