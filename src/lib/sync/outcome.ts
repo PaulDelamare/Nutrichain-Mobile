@@ -51,22 +51,29 @@ export function resolveOutcome(
     error: result.error?.message ?? null,
   };
 
-  if (result.status === 'ok') {
-    return {
-      ...base,
-      status: 'SYNCED',
-      error: null,
-      serverId: result.serverId ? JSON.stringify(result.serverId) : null,
-    };
-  }
+  switch (result.status) {
+    case 'ok':
+      return {
+        ...base,
+        status: 'SYNCED',
+        error: null,
+        serverId: result.serverId ? JSON.stringify(result.serverId) : null,
+      };
 
-  if (result.status === 'conflict') {
-    return { ...base, status: 'CONFLICT', serverId: null };
-  }
+    case 'conflict':
+      return { ...base, status: 'CONFLICT', serverId: null };
 
-  if (result.error?.field === TRANSIENT_ERROR_FIELD) {
-    return retry(operation, now, result.error.message);
-  }
+    case 'error':
+      return result.error?.field === TRANSIENT_ERROR_FIELD
+        ? retry(operation, now, result.error.message)
+        : { ...base, status: 'REJECTED', serverId: null };
 
-  return { ...base, status: 'REJECTED', serverId: null };
+    default: {
+      // Le contrat est détenu par le serveur : le jour où il ajoute un verdict, le classer
+      // en REJECTED par défaut condamnerait silencieusement un scan terrain. On refuse de
+      // compiler à la place.
+      const unhandled: never = result.status;
+      throw new Error(`Verdict serveur inconnu : ${String(unhandled)}`);
+    }
+  }
 }

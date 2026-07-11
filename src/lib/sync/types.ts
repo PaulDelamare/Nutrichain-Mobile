@@ -1,6 +1,18 @@
 /** Statuts locaux d'une opération, alignés sur docs/14_sync_mobile_offline.md. */
 export type OperationStatus = 'PENDING' | 'SYNCED' | 'CONFLICT' | 'REJECTED';
 
+/**
+ * Une opération bloquée ne repartira jamais seule : elle attend une décision humaine.
+ * Source unique — la file (SQL), l'écran de synchronisation et le compteur d'accueil en
+ * dépendaient chacun de leur côté, dont un via une chaîne SQL qu'aucun compilateur ne
+ * vérifiait : une divergence rendait le bouton « Supprimer » silencieusement inopérant.
+ */
+export const BLOCKED_STATUSES = ['CONFLICT', 'REJECTED'] as const satisfies readonly OperationStatus[];
+
+export function isBlocked(status: OperationStatus): boolean {
+  return (BLOCKED_STATUSES as readonly OperationStatus[]).includes(status);
+}
+
 export interface ReceiptPayload {
   id_fournisseur: string;
   shipment_id: string;

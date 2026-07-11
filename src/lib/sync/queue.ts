@@ -1,7 +1,13 @@
 import * as Crypto from 'expo-crypto';
 
 import { getDatabase } from '../db';
-import type { OperationStatus, OperationUpdate, QueuedOperation, ReceiptPayload } from './types';
+import {
+  BLOCKED_STATUSES,
+  type OperationStatus,
+  type OperationUpdate,
+  type QueuedOperation,
+  type ReceiptPayload,
+} from './types';
 
 interface OperationRow {
   client_op_id: string;
@@ -24,17 +30,17 @@ function toOperation(row: OperationRow): QueuedOperation {
 }
 
 const INSERT_OPERATION = `INSERT INTO operations (client_op_id, type, payload, status, created_at)
-   VALUES (?, 'receipt', ?, 'PENDING', ?)`;
+   VALUES (?, ?, ?, 'PENDING', ?)`;
 
-/** Seules ces opérations sont remédiables : les autres sont soit en vol, soit acquises. */
-const BLOCKED_STATUSES = "('CONFLICT', 'REJECTED')";
+/** Fragment SQL dérivé de la source unique : plus de liste de statuts recopiée à la main. */
+const BLOCKED_STATUSES_SQL = `(${BLOCKED_STATUSES.map((status) => `'${status}'`).join(', ')})`;
 
 /** L'identifiant est généré ici, une fois pour toutes : c'est la clé d'idempotence de l'API. */
 export async function enqueueReceipt(payload: ReceiptPayload): Promise<string> {
   const db = await getDatabase();
   const clientOpId = Crypto.randomUUID();
 
-  await db.runAsync(INSERT_OPERATION, clientOpId, JSON.stringify(payload), Date.now());
+  await db.runAsync(INSERT_OPERATION, clientOpId, 'receipt', JSON.stringify(payload), Date.now());
 
   return clientOpId;
 }
@@ -43,13 +49,20 @@ export async function enqueueReceipt(payload: ReceiptPayload): Promise<string> {
  * Le filtre de statut n'est pas une redondance de l'écran : supprimer une opération EN VOL
  * ferait perdre son verdict (et donc son identifiant serveur), et supprimer une opération
  * synchronisée effacerait une trace acquise.
+ *
+ * L'échec est bruyant : un DELETE qui n'affecte aucune ligne laissait l'opérateur croire son
+ * scan supprimé alors qu'il était toujours là.
  */
 export async function deleteOperation(clientOpId: string): Promise<void> {
   const db = await getDatabase();
-  await db.runAsync(
-    `DELETE FROM operations WHERE client_op_id = ? AND status IN ${BLOCKED_STATUSES}`,
+  const result = await db.runAsync(
+    `DELETE FROM operations WHERE client_op_id = ? AND status IN ${BLOCKED_STATUSES_SQL}`,
     clientOpId
   );
+
+  if (result.changes === 0) {
+    throw new Error(`Aucune opération bloquée à supprimer : ${clientOpId}`);
+  }
 }
 
 /**
@@ -71,7 +84,7 @@ export async function requeueOperation(clientOpId: string): Promise<string> {
   await db.withExclusiveTransactionAsync(async (tx) => {
     const row = await tx.getFirstAsync<{ payload: string; type: string }>(
       `SELECT payload, type FROM operations
-        WHERE client_op_id = ? AND status IN ${BLOCKED_STATUSES}`,
+        WHERE client_op_id = ? AND status IN ${BLOCKED_STATUSES_SQL}`,
       clientOpId
     );
 
@@ -79,13 +92,7 @@ export async function requeueOperation(clientOpId: string): Promise<string> {
       throw new Error(`Aucune opération bloquée à renvoyer : ${clientOpId}`);
     }
 
-    // Le jour où un second type d'opération existera (expédition, transformation),
-    // le réinsérer en 'receipt' enverrait un payload étranger au mauvais handler.
-    if (row.type !== 'receipt') {
-      throw new Error(`Type d'opération non renvoyable : ${row.type}`);
-    }
-
-    await tx.runAsync(INSERT_OPERATION, newClientOpId, row.payload, Date.now());
+    await tx.runAsync(INSERT_OPERATION, newClientOpId, row.type, row.payload, Date.now());
     await tx.runAsync('DELETE FROM operations WHERE client_op_id = ?', clientOpId);
   });
 
@@ -176,15 +183,34 @@ export async function countByStatus(): Promise<Record<OperationStatus, number>> 
   return counts;
 }
 
-export async function listOperations(limit = 50): Promise<QueuedOperation[]> {
+/** L'historique est borné pour ne pas charger des milliers de lignes ; les scans bloqués, eux, ne le sont pas. */
+const HISTORY_LIMIT = 50;
+
+/**
+ * Les opérations bloquées passent AVANT l'historique, et échappent à la limite.
+ *
+ * Sans ce tri, elles étaient invisibles : elles sont par nature les plus anciennes (une
+ * opération signalée périmée a plus de 7 jours), donc reléguées hors des 50 dernières dès
+ * qu'un poste scanne quelques dizaines de palettes par jour. L'accueil annonçait « 3 à
+ * corriger » et l'écran n'en montrait aucune — le scan restait bloqué à jamais.
+ */
+export async function listOperations(): Promise<QueuedOperation[]> {
   const db = await getDatabase();
   const rows = await db.getAllAsync<OperationRow>(
     `SELECT client_op_id, type, payload, status, attempts, error
        FROM operations
-      ORDER BY created_at DESC
-      LIMIT ?`,
-    limit
+      WHERE status IN ${BLOCKED_STATUSES_SQL}
+      ORDER BY created_at DESC`
   );
 
-  return rows.map(toOperation);
+  const history = await db.getAllAsync<OperationRow>(
+    `SELECT client_op_id, type, payload, status, attempts, error
+       FROM operations
+      WHERE status NOT IN ${BLOCKED_STATUSES_SQL}
+      ORDER BY created_at DESC
+      LIMIT ?`,
+    HISTORY_LIMIT
+  );
+
+  return [...rows, ...history].map(toOperation);
 }

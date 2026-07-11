@@ -1,7 +1,7 @@
 import { AxiosError } from 'axios';
 
 /** Statut 0 = aucune réponse du serveur (réseau coupé, DNS, timeout). */
-export const NETWORK_ERROR_STATUS = 0;
+const NETWORK_ERROR_STATUS = 0;
 
 export class ApiError extends Error {
   constructor(

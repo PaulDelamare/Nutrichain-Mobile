@@ -70,7 +70,9 @@ export default function HomeScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      countByStatus().then(setCounts);
+      // Un échec SQLite ne doit pas faire tomber l'accueil en rejet non géré : l'écran
+      // reste sur ses derniers compteurs plutôt que de disparaître.
+      countByStatus().then(setCounts).catch(() => undefined);
       loadActiveColdAlerts().then(setColdAlerts);
     }, [])
   );

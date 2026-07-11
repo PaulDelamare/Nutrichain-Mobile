@@ -20,6 +20,7 @@ import { OptionPicker } from '@/components/option-picker';
 import { loadProducts, loadSuppliers, type Product, type Supplier } from '@/lib/catalog';
 import { getErrorMessage } from '@/lib/errors';
 import { enqueueReceipt } from '@/lib/sync/queue';
+import { SHIPMENT_ID_MAX_LENGTH, buildReceipt } from '@/lib/sync/receipt';
 import { syncPendingOperations } from '@/lib/sync/sync';
 import type { ReceiptPayload } from '@/lib/sync/types';
 
@@ -29,9 +30,6 @@ const CONTROL_STATUSES: ReceiptPayload['statut_controle'][] = [
   'ALERTE',
   'NONCONFORME',
 ];
-
-/** Contrainte VineJS du serveur : au-delà, tout le lot de synchronisation est refusé. */
-const SHIPMENT_ID_MAX_LENGTH = 100;
 
 export default function ReceptionScreen() {
   const insets = useSafeAreaInsets();
@@ -66,31 +64,15 @@ export default function ReceptionScreen() {
       .finally(() => setLoading(false));
   }, []);
 
-  const parsedQuantity = Number(quantity.replace(',', '.'));
-  const trimmedShipmentId = shipmentId.trim();
-  const isValid =
-    supplierId !== '' &&
-    productId !== '' &&
-    unit !== '' &&
-    trimmedShipmentId.length >= 3 &&
-    trimmedShipmentId.length <= SHIPMENT_ID_MAX_LENGTH &&
-    Number.isFinite(parsedQuantity) &&
-    parsedQuantity > 0;
+  const receipt = buildReceipt({ supplierId, productId, shipmentId, quantity, unit, status });
 
   const handleSubmit = async () => {
-    if (!isValid) return;
+    if (!receipt || saving) return;
     setSaving(true);
 
     try {
       // Enregistrée localement d'abord : un scan ne doit jamais dépendre du réseau.
-      await enqueueReceipt({
-        id_fournisseur: supplierId,
-        shipment_id: trimmedShipmentId,
-        id_produit: productId,
-        quantite_actuelle: parsedQuantity,
-        unite_code: unit,
-        statut_controle: status,
-      });
+      await enqueueReceipt(receipt);
 
       Toast.show({
         type: 'success',
@@ -184,9 +166,9 @@ export default function ReceptionScreen() {
             />
 
             <TouchableOpacity
-              style={[styles.submit, !isValid && styles.submitDisabled]}
+              style={[styles.submit, !receipt && styles.submitDisabled]}
               onPress={handleSubmit}
-              disabled={!isValid || saving}
+              disabled={!receipt || saving}
               activeOpacity={0.85}
             >
               {saving ? (

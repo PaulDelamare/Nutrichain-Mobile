@@ -16,10 +16,7 @@ import Toast from 'react-native-toast-message';
 import { getErrorMessage } from '@/lib/errors';
 import { countByStatus, deleteOperation, listOperations, requeueOperation } from '@/lib/sync/queue';
 import { syncPendingOperations } from '@/lib/sync/sync';
-import type { OperationStatus, QueuedOperation } from '@/lib/sync/types';
-
-/** Une opération bloquée ne repartira jamais seule : sans action, le scan est perdu. */
-const BLOCKED_STATUSES: OperationStatus[] = ['CONFLICT', 'REJECTED'];
+import { isBlocked, type OperationStatus, type QueuedOperation } from '@/lib/sync/types';
 
 const STATUS_STYLE: Record<OperationStatus, { label: string; color: string; background: string }> = {
   PENDING: { label: 'En attente', color: '#B45309', background: '#FEF3C7' },
@@ -176,7 +173,7 @@ export default function SyncScreen() {
         }
         renderItem={({ item }) => {
           const style = STATUS_STYLE[item.status];
-          const isBlocked = BLOCKED_STATUSES.includes(item.status);
+          const blocked = isBlocked(item.status);
           const isBusy = busy.includes(item.clientOpId);
 
           return (
@@ -196,9 +193,9 @@ export default function SyncScreen() {
 
               {/* Sans le motif, « Rejeté » n'apprend rien : l'opérateur ne peut ni corriger
                   la cause, ni décider s'il vaut la peine de renvoyer. */}
-              {isBlocked && item.error && <Text style={styles.reason}>{item.error}</Text>}
+              {blocked && item.error && <Text style={styles.reason}>{item.error}</Text>}
 
-              {isBlocked && (
+              {blocked && (
                 <View style={styles.actions}>
                   <TouchableOpacity
                     style={[styles.action, isBusy && styles.actionDisabled]}

@@ -303,30 +303,6 @@ const styles = StyleSheet.create({
   },
 
   /* Options row */
-  optionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  checkbox: {
-    width: 18,
-    height: 18,
-    borderRadius: 4,
-  },
-  rememberLabel: {
-    fontSize: 14,
-    color: '#374151',
-  },
-  forgotPassword: {
-    fontSize: 14,
-    color: '#0D9488',
-    fontWeight: '500',
-  },
 
   /* Button */
   buttonWrapper: {
@@ -349,17 +325,6 @@ const styles = StyleSheet.create({
   },
 
   /* SSO */
-  ssoText: {
-    fontSize: 14,
-    color: '#6B7280',
-    textAlign: 'center',
-  },
 
   /* Footer */
-  footer: {
-    marginTop: 24,
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.55)',
-    textAlign: 'center',
-  },
 });
