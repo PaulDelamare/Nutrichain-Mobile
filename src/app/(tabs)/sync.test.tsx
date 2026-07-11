@@ -29,6 +29,7 @@ function operation(status: OperationStatus): QueuedOperation {
     },
     status,
     attempts: 0,
+    error: status === 'REJECTED' ? 'Produit introuvable' : null,
   };
 }
 
@@ -108,6 +109,16 @@ describe('écran de synchronisation', () => {
     resolveRequeue('nouvel-id');
 
     await waitFor(() => expect(queue.requeueOperation).toHaveBeenCalledTimes(1));
+  });
+
+  it('affiche le motif du blocage', async () => {
+    // Le motif était enregistré en base... et jamais relu. « Rejeté » seul n'apprend rien :
+    // l'opérateur ne peut ni corriger la cause, ni juger s'il vaut la peine de renvoyer.
+    withOperations(operation('REJECTED'));
+
+    render(<SyncScreen />);
+
+    await waitFor(() => expect(screen.getByText('Produit introuvable')).toBeTruthy());
   });
 
   it('propose de renvoyer une opération en conflit', async () => {

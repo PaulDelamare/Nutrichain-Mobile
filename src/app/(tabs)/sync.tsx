@@ -194,6 +194,10 @@ export default function SyncScreen() {
                 </View>
               </View>
 
+              {/* Sans le motif, « Rejeté » n'apprend rien : l'opérateur ne peut ni corriger
+                  la cause, ni décider s'il vaut la peine de renvoyer. */}
+              {isBlocked && item.error && <Text style={styles.reason}>{item.error}</Text>}
+
               {isBlocked && (
                 <View style={styles.actions}>
                   <TouchableOpacity
@@ -272,6 +276,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 8,
     backgroundColor: '#F9FAFB',
+  },
+  reason: {
+    fontSize: 12,
+    color: '#B91C1C',
+    backgroundColor: '#FEF2F2',
+    padding: 8,
+    borderRadius: 8,
   },
   actionDisabled: { opacity: 0.4 },
   actionText: { fontSize: 13, fontWeight: '600', color: '#0D9488' },

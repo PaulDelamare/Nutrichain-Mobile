@@ -22,6 +22,8 @@ export interface QueuedOperation {
   payload: ReceiptPayload;
   status: OperationStatus;
   attempts: number;
+  /** Motif du blocage, tel que renvoyé par le serveur : sans lui, l'opérateur doit deviner. */
+  error: string | null;
 }
 
 /** Un item de la réponse 207 de POST /api/sync/scans. */

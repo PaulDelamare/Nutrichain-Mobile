@@ -18,6 +18,7 @@ function operation(overrides: Partial<QueuedOperation> = {}): QueuedOperation {
     },
     status: 'PENDING',
     attempts: 0,
+    error: null,
     ...overrides,
   };
 }

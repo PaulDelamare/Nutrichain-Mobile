@@ -9,6 +9,7 @@ interface OperationRow {
   payload: string;
   status: OperationStatus;
   attempts: number;
+  error: string | null;
 }
 
 function toOperation(row: OperationRow): QueuedOperation {
@@ -18,6 +19,7 @@ function toOperation(row: OperationRow): QueuedOperation {
     payload: JSON.parse(row.payload) as ReceiptPayload,
     status: row.status,
     attempts: row.attempts,
+    error: row.error,
   };
 }
 
@@ -118,7 +120,7 @@ export async function flagStalePending(timestamp: number, message: string): Prom
 export async function getPendingOperations(now: number, limit: number): Promise<QueuedOperation[]> {
   const db = await getDatabase();
   const rows = await db.getAllAsync<OperationRow>(
-    `SELECT client_op_id, type, payload, status, attempts
+    `SELECT client_op_id, type, payload, status, attempts, error
        FROM operations
       WHERE status = 'PENDING' AND next_attempt_at <= ?
       ORDER BY created_at ASC
@@ -177,7 +179,7 @@ export async function countByStatus(): Promise<Record<OperationStatus, number>> 
 export async function listOperations(limit = 50): Promise<QueuedOperation[]> {
   const db = await getDatabase();
   const rows = await db.getAllAsync<OperationRow>(
-    `SELECT client_op_id, type, payload, status, attempts
+    `SELECT client_op_id, type, payload, status, attempts, error
        FROM operations
       ORDER BY created_at DESC
       LIMIT ?`,

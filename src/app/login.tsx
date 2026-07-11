@@ -4,7 +4,6 @@ import {
   useFonts,
 } from '@expo-google-fonts/rajdhani';
 import { Ionicons } from '@expo/vector-icons';
-import Checkbox from 'expo-checkbox';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import React, { useRef, useState } from 'react';
@@ -29,7 +28,6 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [emailTouched, setEmailTouched] = useState(false);
@@ -154,27 +152,6 @@ export default function LoginScreen() {
               </View>
             </View>
 
-            {/* Remember me + Forgot password */}
-            <View style={styles.optionsRow}>
-              <TouchableOpacity
-                style={styles.checkboxRow}
-                onPress={() => setRememberMe((v) => !v)}
-                activeOpacity={0.7}
-              >
-                <Checkbox
-                  value={rememberMe}
-                  onValueChange={setRememberMe}
-                  color={rememberMe ? '#0D9488' : undefined}
-                  style={styles.checkbox}
-                />
-                <Text style={styles.rememberLabel}>Rester connecté</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity activeOpacity={0.7}>
-                <Text style={styles.forgotPassword}>Mot de passe oublié ?</Text>
-              </TouchableOpacity>
-            </View>
-
             {/* Login button */}
             <TouchableOpacity
               onPress={handleLogin}
@@ -196,14 +173,12 @@ export default function LoginScreen() {
               </LinearGradient>
             </TouchableOpacity>
 
-            {/* SSO */}
-            <TouchableOpacity activeOpacity={0.7}>
-              <Text style={styles.ssoText}>SSO entreprise</Text>
-            </TouchableOpacity>
           </View>
 
-          {/* Footer */}
-          <Text style={styles.footer}>Chiffrement TLS · Session conforme RGPD</Text>
+          {/* « Rester connecté », « Mot de passe oublié ? » et « SSO entreprise » ont été
+              retirés : trois contrôles sans aucun code derrière. Un bouton mort dans une app
+              terrain, c'est un opérateur qui appuie, n'obtient rien, et cesse de faire
+              confiance à l'écran. Ils reviendront quand l'API les portera. */}
         </ScrollView>
       </KeyboardAvoidingView>
     </LinearGradient>

@@ -147,17 +147,24 @@ export default function ScanScreen() {
         </View>
       </View>
 
-      {/* Simulate button */}
-      <TouchableOpacity onPress={handleSimulate} activeOpacity={0.85} style={styles.simulateWrapper}>
-        <LinearGradient
-          colors={['#14B8A6', '#0D9488']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={styles.simulateBtn}
+      {/* Aide de démonstration, jamais livrée en production : un opérateur qui l'actionne
+          injecterait un code fictif dans une réception réelle. */}
+      {__DEV__ && (
+        <TouchableOpacity
+          onPress={handleSimulate}
+          activeOpacity={0.85}
+          style={styles.simulateWrapper}
         >
-          <Text style={styles.simulateBtnText}>Simuler un scan réussi</Text>
-        </LinearGradient>
-      </TouchableOpacity>
+          <LinearGradient
+            colors={['#14B8A6', '#0D9488']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={styles.simulateBtn}
+          >
+            <Text style={styles.simulateBtnText}>Simuler un scan (démo)</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
