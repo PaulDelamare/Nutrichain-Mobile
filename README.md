@@ -14,11 +14,32 @@ n'existera jamais dans le suivi.
 
 ```bash
 npm install
-cp .env.example .env   # puis renseigner les deux variables
-npm start
+cp .env.example .env   # choisir la ligne EXPO_PUBLIC_API_URL de son mode + renseigner la clé
 ```
 
-L'API doit tourner en parallèle (`npm run dev` dans `nutrichain-api`).
+L'API doit tourner en parallèle (dans `nutrichain-api` : `docker compose up` ou `npm run dev`).
+
+### Deux façons de lancer (au choix — aucune n'est imposée)
+
+**1. Expo Go / émulateur** — léger, sans build natif. Nécessite un Expo Go compatible avec le SDK du projet.
+
+```bash
+npm start           # serveur de dev, puis choisir la plateforme (a / i / w)
+npm run android     # ouvre sur émulateur/appareil Android (Expo Go)
+npm run ios         # ouvre sur simulateur iOS
+npm run web         # ouvre dans le navigateur
+```
+
+**2. Build natif (dev client)** — compile l'app native et l'installe. Pour un **appareil physique**, ou quand Expo Go ne supporte pas le SDK du projet. Nécessite l'Android SDK (Android) ou Xcode (iOS).
+
+```bash
+npm run android:native   # = expo run:android : build + installe le dev client sur Android
+npm run ios:native       # = expo run:ios     : idem iOS (signature Apple requise pour un iPhone physique)
+```
+
+> Appareil physique en USB : après le build, l'app joint l'API via `adb reverse tcp:3000 tcp:3000`
+> (voir `.env.example`, ligne « Téléphone physique via USB »). Les dossiers natifs `android/` et `ios/`
+> sont régénérés à la volée et gitignorés — chacun build en local.
 
 **Node 22 requis** (`.nvmrc`) : les tests du SQL de la file s'appuient sur `node:sqlite`, absent
 en Node 20 — ils y sont silencieusement **sautés**. La CI est en Node 22.
