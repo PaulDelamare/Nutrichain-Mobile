@@ -36,14 +36,36 @@ function respondWith(status: number, data: unknown): { lastConfig: () => Interna
 }
 
 describe('configuration du client', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    session.getToken.mockResolvedValue(null);
+  });
+
   it('cible l’API configurée avec un délai d’attente borné', () => {
     // Un appel sans timeout reste pendant indéfiniment sur le réseau dégradé d'un entrepôt.
-    expect(apiClient.defaults.baseURL).toBe(process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000');
+    expect(apiClient.defaults.baseURL).toBe(
+      process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000'
+    );
     expect(apiClient.defaults.timeout).toBe(10000);
   });
 
-  it('envoie la clé API exigée par l’API sur /api/auth/*', () => {
-    expect(apiClient.defaults.headers['x-api-key']).toBe(process.env.EXPO_PUBLIC_API_KEY ?? '');
+  it('envoie la clé API sur les routes d’authentification, qui l’exigent', async () => {
+    const request = respondWith(200, {});
+
+    await apiClient.post('/api/auth/sign-out');
+
+    expect(request.lastConfig().headers['x-api-key']).toBe(process.env.EXPO_PUBLIC_API_KEY ?? '');
+  });
+
+  it('n’envoie JAMAIS la clé API sur les routes métier', async () => {
+    // `mixedAuth` bascule en mode machine-à-machine à la simple vue de ce header : il
+    // ignorerait le Bearer, refuserait la sync (400, actorUserId manquant) et servirait
+    // les données de l'organisation de la clé, pas celle de l'utilisateur connecté.
+    const request = respondWith(200, {});
+
+    await apiClient.post('/api/sync/scans', { items: [] });
+
+    expect(request.lastConfig().headers['x-api-key']).toBeUndefined();
   });
 });
 
