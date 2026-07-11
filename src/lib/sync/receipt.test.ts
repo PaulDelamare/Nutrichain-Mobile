@@ -21,6 +21,17 @@ describe('buildReceipt', () => {
     });
   });
 
+  it('transmet l’emplacement scanné', () => {
+    // Sans lui, la quarantaine automatique sur excursion de température ne ciblera jamais ce lot.
+    expect(buildReceipt({ ...VALID, equipmentId: 'eq-1' })?.id_materiel).toBe('eq-1');
+  });
+
+  it('omet l’emplacement plutôt que d’envoyer une chaîne vide', () => {
+    // Le serveur valide `id_materiel` comme un UUID : une chaîne vide ferait refuser TOUT le lot.
+    expect(buildReceipt(VALID)).not.toHaveProperty('id_materiel');
+    expect(buildReceipt({ ...VALID, equipmentId: '' })).not.toHaveProperty('id_materiel');
+  });
+
   it('accepte la virgule décimale, comme la tape un opérateur français', () => {
     expect(buildReceipt({ ...VALID, quantity: '12,5' })?.quantite_actuelle).toBe(12.5);
   });
