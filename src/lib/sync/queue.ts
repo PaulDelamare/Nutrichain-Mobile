@@ -21,20 +21,98 @@ function toOperation(row: OperationRow): QueuedOperation {
   };
 }
 
+const INSERT_OPERATION = `INSERT INTO operations (client_op_id, type, payload, status, created_at)
+   VALUES (?, 'receipt', ?, 'PENDING', ?)`;
+
+/** Seules ces opérations sont remédiables : les autres sont soit en vol, soit acquises. */
+const BLOCKED_STATUSES = "('CONFLICT', 'REJECTED')";
+
 /** L'identifiant est généré ici, une fois pour toutes : c'est la clé d'idempotence de l'API. */
 export async function enqueueReceipt(payload: ReceiptPayload): Promise<string> {
   const db = await getDatabase();
   const clientOpId = Crypto.randomUUID();
 
-  await db.runAsync(
-    `INSERT INTO operations (client_op_id, type, payload, status, created_at)
-     VALUES (?, 'receipt', ?, 'PENDING', ?)`,
-    clientOpId,
-    JSON.stringify(payload),
-    Date.now()
-  );
+  await db.runAsync(INSERT_OPERATION, clientOpId, JSON.stringify(payload), Date.now());
 
   return clientOpId;
+}
+
+/**
+ * Le filtre de statut n'est pas une redondance de l'écran : supprimer une opération EN VOL
+ * ferait perdre son verdict (et donc son identifiant serveur), et supprimer une opération
+ * synchronisée effacerait une trace acquise.
+ */
+export async function deleteOperation(clientOpId: string): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync(
+    `DELETE FROM operations WHERE client_op_id = ? AND status IN ${BLOCKED_STATUSES}`,
+    clientOpId
+  );
+}
+
+/**
+ * Renvoie une opération bloquée (rejetée ou en conflit) sous un NOUVEL identifiant.
+ *
+ * C'est la SEULE exception à la règle « un scan = un identifiant immuable » : rejouer une
+ * opération en conflit sous sa clé d'origine la ferait reconflicter indéfiniment, le serveur
+ * ayant déjà enregistré autre chose sous cette clé. Le renvoi est donc, pour lui, une
+ * opération neuve — au même contenu.
+ *
+ * Atomique : sans transaction, une application tuée entre l'insertion et la suppression
+ * laisserait la copie ET l'originale, et l'opérateur — voyant son scan toujours bloqué —
+ * le renverrait une seconde fois. Deux réceptions pour une seule palette.
+ */
+export async function requeueOperation(clientOpId: string): Promise<string> {
+  const db = await getDatabase();
+  const newClientOpId = Crypto.randomUUID();
+
+  await db.withExclusiveTransactionAsync(async (tx) => {
+    const row = await tx.getFirstAsync<{ payload: string; type: string }>(
+      `SELECT payload, type FROM operations
+        WHERE client_op_id = ? AND status IN ${BLOCKED_STATUSES}`,
+      clientOpId
+    );
+
+    if (!row) {
+      throw new Error(`Aucune opération bloquée à renvoyer : ${clientOpId}`);
+    }
+
+    // Le jour où un second type d'opération existera (expédition, transformation),
+    // le réinsérer en 'receipt' enverrait un payload étranger au mauvais handler.
+    if (row.type !== 'receipt') {
+      throw new Error(`Type d'opération non renvoyable : ${row.type}`);
+    }
+
+    await tx.runAsync(INSERT_OPERATION, newClientOpId, row.payload, Date.now());
+    await tx.runAsync('DELETE FROM operations WHERE client_op_id = ?', clientOpId);
+  });
+
+  return newClientOpId;
+}
+
+/** Sans purge, la file ne fait que grossir : l'historique noierait les scans en attente. */
+export async function purgeSyncedBefore(timestamp: number): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync(
+    "DELETE FROM operations WHERE status = 'SYNCED' AND created_at < ?",
+    timestamp
+  );
+}
+
+/**
+ * Une opération en attente depuis plus longtemps que le TTL d'idempotence du serveur ne doit
+ * PLUS être rejouée à l'aveugle : sa clé y a expiré. Si la réception avait en fait été commitée
+ * et que seule la réponse s'était perdue, la renvoyer créerait un doublon en base — le serveur
+ * n'a plus de quoi la reconnaître. On la signale à l'opérateur au lieu de parier.
+ */
+export async function flagStalePending(timestamp: number, message: string): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync(
+    `UPDATE operations SET status = 'CONFLICT', error = ?
+      WHERE status = 'PENDING' AND created_at < ?`,
+    message,
+    timestamp
+  );
 }
 
 export async function getPendingOperations(now: number, limit: number): Promise<QueuedOperation[]> {
