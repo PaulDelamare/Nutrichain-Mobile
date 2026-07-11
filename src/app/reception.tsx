@@ -22,6 +22,7 @@ import { getErrorMessage } from '@/lib/errors';
 import { enqueueReceipt } from '@/lib/sync/queue';
 import { SHIPMENT_ID_MAX_LENGTH, buildReceipt } from '@/lib/sync/receipt';
 import { syncPendingOperations } from '@/lib/sync/sync';
+import { BRAND, HEADER_GRADIENT } from '@/lib/theme';
 import type { ReceiptPayload } from '@/lib/sync/types';
 
 const CONTROL_STATUSES: ReceiptPayload['statut_controle'][] = [
@@ -93,7 +94,7 @@ export default function ReceptionScreen() {
   return (
     <View style={styles.screen}>
       <LinearGradient
-        colors={['#0F766E', '#0D9488']}
+        colors={HEADER_GRADIENT}
         style={[styles.header, { paddingTop: insets.top + 12 }]}
       >
         <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
@@ -103,7 +104,7 @@ export default function ReceptionScreen() {
       </LinearGradient>
 
       {loading ? (
-        <ActivityIndicator style={styles.loader} size="large" color="#0D9488" />
+        <ActivityIndicator style={styles.loader} size="large" color={BRAND.primary} />
       ) : (
         <KeyboardAvoidingView
           style={styles.flex}
@@ -210,7 +211,7 @@ const styles = StyleSheet.create({
     color: '#111827',
   },
   submit: {
-    backgroundColor: '#0D9488',
+    backgroundColor: BRAND.primary,
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',

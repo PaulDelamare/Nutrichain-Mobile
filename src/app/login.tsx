@@ -23,6 +23,8 @@ import Toast from 'react-native-toast-message';
 import { signIn } from '@/lib/api';
 import { getErrorMessage } from '@/lib/errors';
 
+import { BRAND_GRADIENT } from '@/lib/theme';
+
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function LoginScreen() {
@@ -163,7 +165,7 @@ export default function LoginScreen() {
               style={styles.buttonWrapper}
             >
               <LinearGradient
-                colors={['#14B8A6', '#0D9488']}
+                colors={BRAND_GRADIENT}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 0, y: 1 }}
                 style={[styles.button, (!isFormValid || loading) && styles.buttonDisabled]}

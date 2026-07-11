@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { BRAND, BRAND_GRADIENT } from '@/lib/theme';
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CAMERA_HEIGHT = SCREEN_WIDTH * 1.05;
 const FRAME_W = SCREEN_WIDTH * 0.70;
@@ -52,7 +54,7 @@ export default function ScanScreen() {
   if (!permission) {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator color="#0D9488" size="large" />
+        <ActivityIndicator color={BRAND.primary} size="large" />
       </View>
     );
   }
@@ -70,7 +72,7 @@ export default function ScanScreen() {
             NutriChain a besoin de la caméra pour scanner les codes-barres et datamatrix.
           </Text>
           <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission} activeOpacity={0.85}>
-            <LinearGradient colors={['#14B8A6', '#0D9488']} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={styles.permissionBtnGradient}>
+            <LinearGradient colors={BRAND_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={styles.permissionBtnGradient}>
               <Text style={styles.permissionBtnText}>Autoriser l&apos;accès</Text>
             </LinearGradient>
           </TouchableOpacity>
@@ -154,7 +156,7 @@ export default function ScanScreen() {
           style={styles.simulateWrapper}
         >
           <LinearGradient
-            colors={['#14B8A6', '#0D9488']}
+            colors={BRAND_GRADIENT}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}
             style={styles.simulateBtn}
@@ -255,7 +257,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: CORNER_SIZE,
     height: CORNER_SIZE,
-    borderColor: '#0D9488',
+    borderColor: BRAND.primary,
   },
   tlCorner: {
     top: 0,
@@ -334,7 +336,7 @@ const styles = StyleSheet.create({
   manualSubmitBtn: {
     width: 48,
     height: 48,
-    backgroundColor: '#0D9488',
+    backgroundColor: BRAND.primary,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',

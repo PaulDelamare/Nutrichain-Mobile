@@ -3,13 +3,15 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { useAuthStatus } from '@/hooks/use-auth-status';
 
+import { BRAND } from '@/lib/theme';
+
 export default function Index() {
   const status = useAuthStatus();
 
   if (status === 'loading') {
     return (
       <View style={styles.loader}>
-        <ActivityIndicator size="large" color="#0D9488" />
+        <ActivityIndicator size="large" color={BRAND.primary} />
       </View>
     );
   }

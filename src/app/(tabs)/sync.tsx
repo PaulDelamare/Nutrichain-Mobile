@@ -13,10 +13,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 
-import { getErrorMessage } from '@/lib/errors';
+import { toastError } from '@/lib/toast';
 import { countByStatus, deleteOperation, listOperations, requeueOperation } from '@/lib/sync/queue';
 import { syncPendingOperations } from '@/lib/sync/sync';
 import { isBlocked, type OperationStatus, type QueuedOperation } from '@/lib/sync/types';
+
+import { BRAND } from '@/lib/theme';
 
 const STATUS_STYLE: Record<OperationStatus, { label: string; color: string; background: string }> = {
   PENDING: { label: 'En attente', color: '#B45309', background: '#FEF3C7' },
@@ -77,7 +79,7 @@ export default function SyncScreen() {
         await refresh();
         syncPendingOperations().catch(() => undefined);
       } catch (error: unknown) {
-        Toast.show({ type: 'error', text1: 'Renvoi impossible', text2: getErrorMessage(error) });
+        toastError('Renvoi impossible', error);
       }
     });
 
@@ -107,11 +109,7 @@ export default function SyncScreen() {
               await refresh();
             } catch (error: unknown) {
               // Sans ce message, l'opérateur croirait le scan supprimé alors qu'il est resté.
-              Toast.show({
-                type: 'error',
-                text1: 'Suppression impossible',
-                text2: getErrorMessage(error),
-              });
+              toastError('Suppression impossible', error);
             }
           }),
       },
@@ -203,7 +201,7 @@ export default function SyncScreen() {
                     disabled={isBusy}
                     activeOpacity={0.7}
                   >
-                    <Ionicons name="refresh-outline" size={15} color="#0D9488" />
+                    <Ionicons name="refresh-outline" size={15} color={BRAND.primary} />
                     <Text style={styles.actionText}>Renvoyer</Text>
                   </TouchableOpacity>
 
@@ -236,7 +234,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#0D9488',
+    backgroundColor: BRAND.primary,
     borderRadius: 12,
     paddingVertical: 15,
   },
@@ -282,7 +280,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   actionDisabled: { opacity: 0.4 },
-  actionText: { fontSize: 13, fontWeight: '600', color: '#0D9488' },
+  actionText: { fontSize: 13, fontWeight: '600', color: BRAND.primary },
   actionTextDanger: { color: '#B91C1C' },
   rowTitle: { fontSize: 14, fontWeight: '600', color: '#111827' },
   rowSubtitle: { fontSize: 12, color: '#6B7280' },
