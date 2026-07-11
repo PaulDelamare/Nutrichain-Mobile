@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, Tabs } from 'expo-router';
-import { ActivityIndicator, Platform, StyleSheet, View, type ColorValue } from 'react-native';
+import { ActivityIndicator, StyleSheet, View, type ColorValue } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuthStatus } from '@/hooks/use-auth-status';
 
@@ -17,6 +18,7 @@ function tabIcon(active: IconName, inactive: IconName) {
 
 export default function TabsLayout() {
   const status = useAuthStatus();
+  const insets = useSafeAreaInsets();
 
   // Sans cette garde, un lien profond ouvre les onglets sans session : les écrans
   // s'afficheraient vides et chaque appel API partirait en 401.
@@ -42,8 +44,11 @@ export default function TabsLayout() {
           backgroundColor: '#ffffff',
           borderTopColor: '#F3F4F6',
           borderTopWidth: 1,
-          height: Platform.OS === 'ios' ? 80 : 64,
-          paddingBottom: Platform.OS === 'ios' ? 20 : 8,
+          // Ajoute l'inset système du bas (barre de navigation Android / home indicator iOS)
+          // à la hauteur ET au padding. Sans ça, en edge-to-edge (défaut Expo SDK 56) la barre
+          // système recouvre les onglets et les rend intouchables.
+          height: 60 + insets.bottom,
+          paddingBottom: Math.max(insets.bottom, 8),
           paddingTop: 8,
         },
         tabBarLabelStyle: {
