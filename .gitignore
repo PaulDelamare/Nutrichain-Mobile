@@ -31,8 +31,12 @@ yarn-error.*
 *.pem
 
 # local env files
-.env
-.env*.local
+# `.env` + `.env*.local` laissaient passer .env.development et .env.production, qu'Expo charge aussi.
+.env*
+!.env.example
+
+# tests
+coverage/
 
 # typescript
 *.tsbuildinfo

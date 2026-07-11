@@ -33,7 +33,7 @@ export function toApiError(error: AxiosError): ApiError {
 
   const { status } = error.response;
   const data = error.response.data as ApiErrorBody | undefined;
-  const [firstError] = data?.error ?? [];
+  const [firstError] = Array.isArray(data?.error) ? data.error : [];
 
   if (firstError) {
     return new ApiError(firstError.message, status, firstError.field);
@@ -48,10 +48,15 @@ export function getErrorMessage(error: unknown): string {
     return 'Une erreur est survenue.';
   }
 
-  // La clé API est une erreur de configuration de l'app, pas une faute de l'utilisateur :
-  // l'annoncer comme « mot de passe incorrect » enverrait l'opérateur sur une fausse piste.
+  // Ces deux cas arrivent avec un statut 401 mais n'ont rien à voir avec des identifiants
+  // erronés : sans branche dédiée, ils seraient annoncés comme « mot de passe incorrect »
+  // et l'opérateur ressaisirait indéfiniment un mot de passe pourtant valide.
   if (error.field === 'api_key') {
     return "Configuration invalide : clé API refusée par le serveur. Contactez l'administrateur.";
+  }
+
+  if (error.field === 'two_factor') {
+    return error.message;
   }
 
   if (error.status === NETWORK_ERROR_STATUS) {

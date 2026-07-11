@@ -36,6 +36,20 @@ describe('toApiError', () => {
 
     expect(error.status).toBe(0);
   });
+
+  it('survit à un corps d’erreur inattendu (page HTML d’un proxy)', () => {
+    const error = toApiError(axiosErrorWith(502, '<html>Bad Gateway</html>'));
+
+    expect(error.status).toBe(502);
+    expect(getErrorMessage(error)).toBe('Erreur serveur. Réessayez dans quelques instants.');
+  });
+
+  it('survit à une liste d’erreurs vide', () => {
+    const error = toApiError(axiosErrorWith(400, { status: 400, error: [] }));
+
+    expect(error.status).toBe(400);
+    expect(error.field).toBeUndefined();
+  });
 });
 
 describe('getErrorMessage', () => {
@@ -58,6 +72,14 @@ describe('getErrorMessage', () => {
 
   it('traduit un 429 en invitation à patienter', () => {
     expect(getErrorMessage(new ApiError('Too many requests', 429))).toContain('tentatives');
+  });
+
+  it('traduit un 403 en refus de droits, pas en erreur d’identifiants', () => {
+    expect(getErrorMessage(new ApiError('Forbidden', 403))).toContain('Accès refusé');
+  });
+
+  it('conserve le message serveur pour un statut non listé', () => {
+    expect(getErrorMessage(new ApiError('Lot introuvable.', 404))).toBe('Lot introuvable.');
   });
 
   it('masque les détails techniques des erreurs serveur', () => {
