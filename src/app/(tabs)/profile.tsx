@@ -1,12 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useCurrentUser } from '@/hooks/use-current-user';
 import { signOut } from '@/lib/api';
+import { formatRole } from '@/lib/roles';
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
+  const { user, loading } = useCurrentUser();
 
   const handleLogout = async () => {
     await signOut();
@@ -18,8 +21,16 @@ export default function ProfileScreen() {
       <View style={styles.avatar}>
         <Ionicons name="person" size={40} color="#0D9488" />
       </View>
-      <Text style={styles.name}>Marie L.</Text>
-      <Text style={styles.role}>Logistique · Site Lyon</Text>
+
+      {loading ? (
+        <ActivityIndicator color="#0D9488" />
+      ) : (
+        <>
+          <Text style={styles.name}>{user?.name ?? 'Utilisateur'}</Text>
+          <Text style={styles.role}>{user?.email ?? ''}</Text>
+          {user?.role && <Text style={styles.role}>{formatRole(user.role)}</Text>}
+        </>
+      )}
 
       <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
         <Ionicons name="log-out-outline" size={18} color="#EF4444" />
