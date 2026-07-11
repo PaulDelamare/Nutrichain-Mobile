@@ -6,6 +6,10 @@ Un opérateur scanne et saisit une réception **dans une chambre froide, un entr
 une zone sans réseau**. L'application est donc conçue pour fonctionner **hors ligne d'abord** :
 rien de ce qu'elle enregistre ne dépend du réseau au moment de la saisie.
 
+**Le mobile PRODUIT la traçabilité** (scans, réceptions, emplacements) ; le front web la
+**consomme** (généalogie, tableaux de bord, rappel produit). Ce que le mobile ne capture pas
+n'existera jamais dans le suivi.
+
 ## Démarrage
 
 ```bash
@@ -15,6 +19,9 @@ npm start
 ```
 
 L'API doit tourner en parallèle (`npm run dev` dans `nutrichain-api`).
+
+**Node 22 requis** (`.nvmrc`) : les tests du SQL de la file s'appuient sur `node:sqlite`, absent
+en Node 20 — ils y sont silencieusement **sautés**. La CI est en Node 22.
 
 ### Configuration (`.env`)
 
@@ -27,9 +34,9 @@ L'API doit tourner en parallèle (`npm run dev` dans `nutrichain-api`).
 portail d'accès à l'API, **jamais un secret** — aucun droit n'est accordé sans session
 utilisateur. N'y placez aucune autre valeur sensible.
 
-⚠️ **La clé n'est envoyée que sur `/api/auth/*`.** L'envoyer sur une route métier ferait
-basculer l'API en mode machine-à-machine : elle ignorerait la session et servirait les données
-de l'organisation liée à la clé, pas celle de l'utilisateur connecté.
+⚠️ **La clé n'est envoyée que sur `/api/auth/*`.** L'envoyer sur une route métier ferait basculer
+l'API en mode machine-à-machine : elle ignorerait la session et servirait les données de
+l'organisation liée à la clé, pas celle de l'utilisateur connecté.
 
 ## Le modèle hors ligne
 
@@ -40,22 +47,22 @@ saisie → SQLite (PENDING) → [réseau] → POST /api/sync/scans → verdict s
                                                                               ↘ CONFLICT / REJECTED
 ```
 
-1. **La saisie n'appelle jamais l'API.** La réception est écrite en SQLite, avec un
-   `clientOpId` (UUID v4) généré une fois pour toutes.
-2. Ce `clientOpId` est la **clé d'idempotence** du serveur : il est réémis **tel quel** à
-   chaque tentative. C'est ce qui garantit qu'un renvoi après coupure réseau ne crée pas de
-   réception en double.
+1. **La saisie n'appelle jamais l'API.** La réception est écrite en SQLite, avec un `clientOpId`
+   (UUID v4) généré une fois pour toutes.
+2. Ce `clientOpId` est la **clé d'idempotence** du serveur : il est réémis **tel quel** à chaque
+   tentative. C'est ce qui garantit qu'un renvoi après coupure réseau ne crée pas de réception
+   en double.
 3. La file part **automatiquement au retour du réseau** (`expo-network`), par lots de 100 max,
    en boucle jusqu'à épuisement.
 4. L'API répond **207 Multi-Status** : un verdict par opération.
 
-| Verdict serveur           | Traitement local                                                     |
-| ------------------------- | -------------------------------------------------------------------- |
-| `ok`                      | `SYNCED`, identifiant serveur conservé                               |
-| `conflict`                | `CONFLICT`, **jamais rejoué** (payload divergent = client corrompu)   |
-| `error`, champ `internal` | transitoire → réessai, backoff 30 s → 1 min → 5 min → 15 min → 30 min |
-| `error`, autre champ      | `REJECTED` (un fournisseur inexistant ne le deviendra pas)            |
-| verdict absent            | réessai — perdre un scan est pire que le rejouer, l'idempotence protège |
+| Verdict serveur           | Traitement local                                                        |
+| ------------------------- | ----------------------------------------------------------------------- |
+| `ok`                      | `SYNCED`, identifiant serveur conservé                                  |
+| `conflict`                | `CONFLICT`, **jamais rejoué** (payload divergent = client corrompu)      |
+| `error`, champ `internal` | transitoire → réessai, backoff 30 s → 1 min → 5 min → 15 min → 30 min    |
+| `error`, autre champ      | `REJECTED` (un fournisseur inexistant ne le deviendra pas)               |
+| verdict absent            | réessai — perdre un scan est pire que le rejouer, l'idempotence protège  |
 
 **Cas particuliers traités :**
 
@@ -63,33 +70,53 @@ saisie → SQLite (PENDING) → [réseau] → POST /api/sync/scans → verdict s
   fait rejeter les 100. Le lot est alors **scindé par dichotomie** jusqu'à isoler le fautif —
   les scans valides passent.
 - **Opération en attente depuis plus de 7 jours.** Sa clé d'idempotence a **expiré côté
-  serveur** : la rejouer pourrait créer un doublon si la réception avait en fait été commitée
-  et que seule la réponse s'était perdue. Elle est donc **signalée**, pas rejouée.
-- **Catalogue en cache.** Fournisseurs et produits sont mis en cache localement : sans eux, une
-  réception serait impossible à saisir hors réseau — c'est-à-dire là où l'app doit servir.
+  serveur** : la rejouer pourrait créer un doublon si la réception avait en fait été commitée et
+  que seule la réponse s'était perdue. Elle est donc **signalée**, pas rejouée.
+- **Catalogue en cache.** Fournisseurs, produits et équipements sont mis en cache localement :
+  sans eux, une réception serait impossible à saisir hors réseau — c'est-à-dire là où l'app doit
+  servir.
 
 ### Remédiation
 
-Une opération `CONFLICT` ou `REJECTED` ne repartira jamais seule. L'écran Sync affiche son
-motif et permet de la **renvoyer** ou de la **supprimer**.
+Une opération `CONFLICT` ou `REJECTED` ne repartira jamais seule. L'écran Sync affiche son motif
+et permet de la **renvoyer** ou de la **supprimer**.
 
 Le renvoi crée une opération **neuve** (nouvel identifiant). C'est la seule exception à la règle
 « un scan = un identifiant immuable », et elle est sûre : côté serveur, un `conflict` comme un
 `error` tournent dans une transaction qui *rollback* — rien n'a été enregistré sous cette clé.
 La rejouer telle quelle reconflicterait indéfiniment.
 
+## L'emplacement du lot — le « où »
+
+À la réception, l'opérateur **scanne le lot, puis scanne le frigo**. Les deux scans sont physiques
+et sur place : il ne peut pas déclarer un emplacement où il n'est pas (ce qu'un menu déroulant,
+remplissable depuis le bureau, permettrait).
+
+**Ce n'est pas un confort.** La mise en quarantaine automatique sur excursion de température ne
+bloque **que** les lots dont `id_materiel_actuel` pointe sur l'équipement en cause. **Un lot reçu
+sans emplacement ne sera jamais isolé si son frigo dérive.**
+
+- Le code scanné est résolu **localement** contre la liste des équipements en cache — donc **sans
+  réseau**, dans la chambre froide.
+- Un code étranger ne résout rien (un code produit scanné par mégarde ne doit jamais passer pour
+  un emplacement).
+- **Une cuve est refusée** : elle transforme, elle ne stocke pas.
+- L'étiquette scannable est générée côté API (`POST /api/organization/equipment` la crée,
+  `GET /api/organization/equipment/:id/label` produit le QR à imprimer et coller sur le matériel).
+
 ## Endpoints consommés
 
-| Endpoint                        | Usage                                             |
-| ------------------------------- | ------------------------------------------------- |
-| `POST /api/auth/sign-in/email`  | Connexion (+ `x-api-key`)                         |
-| `POST /api/auth/sign-out`       | Déconnexion (+ `x-api-key`)                       |
-| `GET /api/me`                   | Identité et organisation active                   |
-| `GET /api/organization/members` | Rôle de l'utilisateur (échec toléré)              |
-| `GET /api/organization/suppliers` | Catalogue fournisseurs (mis en cache)           |
-| `GET /api/traceability/products`  | Catalogue produits (mis en cache)               |
-| `GET /api/organization/alerts`  | Alertes chaîne du froid (filtrées côté client)    |
-| `POST /api/sync/scans`          | **Le seul point d'écriture de l'application**     |
+| Endpoint                          | Usage                                          |
+| --------------------------------- | ---------------------------------------------- |
+| `POST /api/auth/sign-in/email`    | Connexion (+ `x-api-key`)                      |
+| `POST /api/auth/sign-out`         | Déconnexion (+ `x-api-key`)                    |
+| `GET /api/me`                     | Identité et organisation active                |
+| `GET /api/organization/members`   | Rôle de l'utilisateur (échec toléré)           |
+| `GET /api/organization/suppliers` | Catalogue fournisseurs (mis en cache)          |
+| `GET /api/traceability/products`  | Catalogue produits (mis en cache)              |
+| `GET /api/organization/equipment` | Matériels et leurs étiquettes (mis en cache)   |
+| `GET /api/organization/alerts`    | Alertes chaîne du froid (filtrées côté client) |
+| `POST /api/sync/scans`            | **Le seul point d'écriture de l'application**  |
 
 ## Architecture
 
@@ -99,26 +126,42 @@ src/
     (tabs)/       Accueil · Scan · Sync · Profil (groupe protégé par une garde de session)
     login.tsx     connexion
     reception.tsx formulaire de réception (alimente la file locale)
+  components/     composants partagés (scanner d'emplacement, sélecteur)
   lib/
     api.ts        client HTTP (intercepteurs : Bearer, purge sur 401, clé API sur /auth/*)
     session.ts    jeton dans le coffre chiffré du système (variante web : localStorage)
     errors.ts     normalisation des deux formats d'erreur de l'API, messages opérateur
+    toast.ts      annonce d'erreur unifiée
+    theme.ts      couleurs de marque (uniquement — les gris restent locaux aux écrans)
     db.ts         connexion SQLite et schéma
-    cache.ts      cache clé/valeur (catalogue)
+    cache.ts      cache clé/valeur
     catalog.ts    fournisseurs et produits — réseau d'abord, cache en secours
+    equipment.ts  matériels, et résolution locale d'un code scanné
     alerts.ts     alertes chaîne du froid
     me.ts         identité et rôle
     sync/
       queue.ts    la file : enfilement, sélection, verdicts, remédiation, rétention
       sync.ts     l'orchestration : lots, boucle, dichotomie, verrou
       outcome.ts  la décision : quel verdict serveur produit quel état local (pur)
-      backoff.ts  les délais de réessai (pur)
+      receipt.ts  la validation d'une réception (pure)
+      backoff.ts  les délais de réessai (purs)
       auto-sync.ts déclencheur au retour du réseau + rétention au démarrage
-  hooks/          état de session, utilisateur courant, état réseau
+  hooks/          session, utilisateur courant, état réseau
+  __tests__/      tests des écrans — VOIR L'AVERTISSEMENT CI-DESSOUS
 ```
 
-La logique de décision (`outcome.ts`, `backoff.ts`) est **pure** : c'est là que se joue la perte
-ou la duplication d'un scan, et c'est donc là que les tests sont les plus denses.
+La logique de décision (`outcome.ts`, `backoff.ts`, `receipt.ts`) est **pure** : c'est là que se
+joue la perte ou la duplication d'un scan, et c'est donc là que les tests sont les plus denses.
+
+### ⚠️ Ne jamais mettre de fichier de test dans `src/app/`
+
+**expo-router transforme en route tout fichier placé dans `src/app/`** — y compris un `.test.tsx`
+(sa regex d'exclusion ne couvre que `+api`, `+html` et `+native-intent`). Un `_layout.test.tsx` y
+entre en collision avec le vrai layout, et **l'application ne démarre plus** — pendant que les
+tests, le typecheck et le lint restent tous au vert. Effet de bord : `@testing-library` et les
+globals `jest` partent dans le **bundle de production**.
+
+**Les tests d'écrans vivent dans `src/__tests__/`.** Le job de build de la CI garde cette porte.
 
 ## Qualité
 
@@ -128,26 +171,52 @@ npm run typecheck
 npm run lint
 ```
 
-Les trois commandes tournent en CI sur chaque PR (`.github/workflows/mobile-ci.yml`).
+Ces trois commandes, **plus un build**, tournent en CI sur chaque PR
+(`.github/workflows/ci.yml`, 4 jobs, Node 22).
 
-Un e2e vérifie le parcours complet **contre l'API réelle**, jusqu'à la vérification en base
-Postgres — à lancer depuis `nutrichain-api` :
+**Le build n'est pas décoratif** : les tests unitaires prouvent que le code fait ce qu'on croit,
+ils ne prouvent pas que l'application *démarre*. C'est le build qui a trouvé le bug ci-dessus.
+
+### Vérifier contre l'API réelle
 
 ```bash
+# depuis nutrichain-api
 npm run e2e:mobile
 ```
 
-**À rejouer après tout changement du contrat de synchronisation.**
+Rejoue le parcours mobile complet (connexion, catalogue, scan, synchronisation) contre l'API et
+**vérifie le résultat en base Postgres**. **À rejouer après tout changement du contrat de sync.**
+
+### Voir l'application tourner
+
+```bash
+npm run web
+```
+
+L'application se lance dans un navigateur (`react-native-web`) et peut être pilotée par Playwright
+pour des captures d'écran. `metro.config.js` est nécessaire : `expo-sqlite` s'appuie sur
+WebAssembly côté web, et Metro ne résout pas `.wasm` par défaut.
+
+⚠️ La **connexion échoue en web** (403) : l'API n'a pas `localhost:8081` dans ses `trustedOrigins`.
+Sans effet en natif — une application native n'envoie pas d'en-tête `Origin`.
+
+## Branches
+
+| Branche       | Rôle                                    |
+| ------------- | --------------------------------------- |
+| `develop`     | **Préprod — base de toutes les PR**     |
+| `main`        | Production                              |
+| `feat/…` `fix/…` `chore/…` | Travail, éphémères         |
+
+Les deux branches durables sont protégées : PR obligatoire, les 4 vérifications de CI doivent
+passer, force push et suppression bloqués.
 
 ## Limites connues
 
 - Le code scanné pré-remplit le n° d'expédition : il n'est **ni parsé (GS1) ni résolu** contre
   l'API — aucun endpoint de recherche d'un lot par code n'existe côté serveur.
-- L'application est **write-only** : aucune consultation de traçabilité, d'historique ou de
-  généalogie.
-- Seule la **réception** est synchronisable (`type: 'receipt'`). Transformation et expédition
-  sont différées côté API (P3).
+- L'application est **write-only** : aucune consultation de traçabilité (c'est le rôle du front).
+- Seule la **réception** est synchronisable (`type: 'receipt'`). Transformation et expédition sont
+  bloquées côté API : l'enum du endpoint de sync ne les accepte pas.
 - Le cache du catalogue n'a **pas de durée de validité**.
-- `queue.ts` est testé au niveau du SQL émis, pas d'un moteur SQLite réel (expo-sqlite est
-  natif ; les alternatives exigent WASM ou une compilation native).
 - Pas de notifications push, pas de 2FA, pas de réinitialisation de mot de passe.
