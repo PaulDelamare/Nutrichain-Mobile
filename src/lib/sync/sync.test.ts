@@ -29,6 +29,7 @@ function operation(clientOpId: string, attempts = 0): QueuedOperation {
     },
     status: 'PENDING',
     attempts,
+    error: null,
   };
 }
 

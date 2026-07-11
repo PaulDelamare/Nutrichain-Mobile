@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useCurrentUser } from '@/hooks/use-current-user';
+import { useOnlineStatus } from '@/hooks/use-online-status';
 import { loadActiveColdAlerts, type Alert } from '@/lib/alerts';
 import { formatRole } from '@/lib/roles';
 import { countByStatus } from '@/lib/sync/queue';
@@ -58,6 +59,7 @@ function QuickAction({ icon, iconColor, iconBg, title, subtitle, onPress }: Quic
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useCurrentUser();
+  const online = useOnlineStatus();
   const [counts, setCounts] = useState<Record<OperationStatus, number>>({
     PENDING: 0,
     SYNCED: 0,
@@ -68,7 +70,9 @@ export default function HomeScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      countByStatus().then(setCounts);
+      // Un échec SQLite ne doit pas faire tomber l'accueil en rejet non géré : l'écran
+      // reste sur ses derniers compteurs plutôt que de disparaître.
+      countByStatus().then(setCounts).catch(() => undefined);
       loadActiveColdAlerts().then(setColdAlerts);
     }, [])
   );
@@ -98,8 +102,8 @@ export default function HomeScreen() {
           </View>
 
           <View style={styles.onlineBadge}>
-            <View style={styles.onlineDot} />
-            <Text style={styles.onlineText}>En ligne</Text>
+            <View style={[styles.onlineDot, !online && styles.offlineDot]} />
+            <Text style={styles.onlineText}>{online ? 'En ligne' : 'Hors ligne'}</Text>
           </View>
         </View>
 
@@ -225,6 +229,9 @@ const styles = StyleSheet.create({
     height: 7,
     borderRadius: 4,
     backgroundColor: '#4ADE80',
+  },
+  offlineDot: {
+    backgroundColor: '#FBBF24',
   },
   onlineText: {
     fontSize: 12,

@@ -25,21 +25,20 @@ export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
   const [manualInput, setManualInput] = useState('');
-  const [scanned, setScanned] = useState(false);
-  const inputRef = useRef<TextInput>(null);
 
-  // La caméra émet en rafale : sans ce verrou, un seul code ouvrirait dix fois l'écran.
-  // Il est relâché au retour sur l'onglet, ce qui évite un minuteur à nettoyer.
-  useFocusEffect(useCallback(() => setScanned(false), []));
+  // Le verrou vit dans une ref, pas dans l'état : la caméra rappelle depuis le processeur
+  // natif de frames SANS attendre le re-rendu de React, donc deux codes lus dans la même
+  // frame liraient tous deux `false` — deux écrans de réception empilés, et l'opérateur
+  // enregistre deux fois la même palette. Il est relâché au retour sur l'onglet, ce qui
+  // évite un minuteur à nettoyer.
+  const scanned = useRef(false);
+  useFocusEffect(useCallback(() => void (scanned.current = false), []));
 
-  const handleCode = useCallback(
-    (code: string) => {
-      if (scanned) return;
-      setScanned(true);
-      router.push({ pathname: '/reception', params: { code } });
-    },
-    [scanned]
-  );
+  const handleCode = useCallback((code: string) => {
+    if (scanned.current) return;
+    scanned.current = true;
+    router.push({ pathname: '/reception', params: { code } });
+  }, []);
 
   const handleSimulate = () => handleCode('00376112345678901234');
 
@@ -61,7 +60,7 @@ export default function ScanScreen() {
   if (!permission.granted) {
     return (
       <View style={[styles.dark, { paddingTop: insets.top }]}>
-        <Header insetTop={0} />
+        <Header />
         <View style={styles.center}>
           <View style={styles.permissionIcon}>
             <Ionicons name="camera-outline" size={48} color="rgba(255,255,255,0.5)" />
@@ -83,7 +82,7 @@ export default function ScanScreen() {
   // ─── Main scan screen ────────────────────────────────────────
   return (
     <View style={[styles.dark, { paddingTop: insets.top }]}>
-      <Header insetTop={0} />
+      <Header />
 
       {/* Camera with overlay */}
       <View style={styles.cameraContainer}>
@@ -128,7 +127,6 @@ export default function ScanScreen() {
         <Text style={styles.manualLabel}>SAISIE MANUELLE (SSCC / LOT / GTIN)</Text>
         <View style={styles.manualRow}>
           <TextInput
-            ref={inputRef}
             style={styles.manualInput}
             placeholder="3761234567890123"
             placeholderTextColor="rgba(255,255,255,0.30)"
@@ -147,25 +145,32 @@ export default function ScanScreen() {
         </View>
       </View>
 
-      {/* Simulate button */}
-      <TouchableOpacity onPress={handleSimulate} activeOpacity={0.85} style={styles.simulateWrapper}>
-        <LinearGradient
-          colors={['#14B8A6', '#0D9488']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={styles.simulateBtn}
+      {/* Aide de démonstration, jamais livrée en production : un opérateur qui l'actionne
+          injecterait un code fictif dans une réception réelle. */}
+      {__DEV__ && (
+        <TouchableOpacity
+          onPress={handleSimulate}
+          activeOpacity={0.85}
+          style={styles.simulateWrapper}
         >
-          <Text style={styles.simulateBtnText}>Simuler un scan réussi</Text>
-        </LinearGradient>
-      </TouchableOpacity>
+          <LinearGradient
+            colors={['#14B8A6', '#0D9488']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={styles.simulateBtn}
+          >
+            <Text style={styles.simulateBtnText}>Simuler un scan (démo)</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
-function Header({ insetTop }: { insetTop: number }) {
+function Header() {
   return (
-    <View style={[styles.header, { paddingTop: insetTop + 4 }]}>
+    <View style={styles.header}>
       <TouchableOpacity
         onPress={() => router.navigate('/(tabs)')}
         style={styles.backBtn}
