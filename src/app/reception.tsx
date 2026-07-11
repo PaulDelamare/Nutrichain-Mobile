@@ -23,13 +23,15 @@ import { enqueueReceipt } from '@/lib/sync/queue';
 import { syncPendingOperations } from '@/lib/sync/sync';
 import type { ReceiptPayload } from '@/lib/sync/types';
 
-const UNITS = ['KG', 'G', 'L', 'ML', 'UNIT', 'PALLET', 'BOX'];
 const CONTROL_STATUSES: ReceiptPayload['statut_controle'][] = [
   'OK',
   'CONFORME',
   'ALERTE',
   'NONCONFORME',
 ];
+
+/** Contrainte VineJS du serveur : au-delà, tout le lot de synchronisation est refusé. */
+const SHIPMENT_ID_MAX_LENGTH = 100;
 
 export default function ReceptionScreen() {
   const insets = useSafeAreaInsets();
@@ -43,9 +45,14 @@ export default function ReceptionScreen() {
   const [productId, setProductId] = useState('');
   const [shipmentId, setShipmentId] = useState(code ?? '');
   const [quantity, setQuantity] = useState('');
-  const [unit, setUnit] = useState('KG');
+  const [unit, setUnit] = useState('');
   const [status, setStatus] = useState<ReceiptPayload['statut_controle']>('OK');
   const [saving, setSaving] = useState(false);
+
+  // Les unités viennent des produits, jamais d'une liste codée en dur : elles sont des
+  // clés étrangères côté serveur, et « KG » n'y existe pas — c'est « kg ». Une constante
+  // locale ferait accepter la réception puis rejeter en silence à la synchronisation.
+  const units = [...new Set(products.map((product) => product.unite_reference))];
 
   useEffect(() => {
     Promise.all([loadSuppliers(), loadProducts()])
@@ -60,10 +67,13 @@ export default function ReceptionScreen() {
   }, []);
 
   const parsedQuantity = Number(quantity.replace(',', '.'));
+  const trimmedShipmentId = shipmentId.trim();
   const isValid =
     supplierId !== '' &&
     productId !== '' &&
-    shipmentId.trim().length >= 3 &&
+    unit !== '' &&
+    trimmedShipmentId.length >= 3 &&
+    trimmedShipmentId.length <= SHIPMENT_ID_MAX_LENGTH &&
     Number.isFinite(parsedQuantity) &&
     parsedQuantity > 0;
 
@@ -75,7 +85,7 @@ export default function ReceptionScreen() {
       // Enregistrée localement d'abord : un scan ne doit jamais dépendre du réseau.
       await enqueueReceipt({
         id_fournisseur: supplierId,
-        shipment_id: shipmentId.trim(),
+        shipment_id: trimmedShipmentId,
         id_produit: productId,
         quantite_actuelle: parsedQuantity,
         unite_code: unit,
@@ -144,6 +154,7 @@ export default function ReceptionScreen() {
                 onChangeText={setShipmentId}
                 placeholder="SHIP-2026-001"
                 autoCapitalize="characters"
+                maxLength={SHIPMENT_ID_MAX_LENGTH}
               />
             </View>
 
@@ -160,7 +171,7 @@ export default function ReceptionScreen() {
 
             <OptionPicker
               label="Unité"
-              options={UNITS.map((u) => ({ value: u, label: u }))}
+              options={units.map((u) => ({ value: u, label: u }))}
               selected={unit}
               onSelect={setUnit}
             />

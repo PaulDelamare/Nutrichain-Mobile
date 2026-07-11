@@ -9,11 +9,7 @@ const API_KEY = process.env.EXPO_PUBLIC_API_KEY ?? '';
 
 export const apiClient = axios.create({
   baseURL: API_URL,
-  headers: {
-    'Content-Type': 'application/json',
-    // Exigé par l'API sur /api/auth/* (checkApiKey) : simple portail, jamais un secret.
-    'x-api-key': API_KEY,
-  },
+  headers: { 'Content-Type': 'application/json' },
   timeout: 10000,
 });
 
@@ -22,6 +18,16 @@ apiClient.interceptors.request.use(async (config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
+  // La clé API n'est exigée que par /api/auth/* (checkApiKey). L'envoyer partout serait
+  // pire qu'inutile : `mixedAuth` bascule en mode machine-à-machine dès qu'il voit ce
+  // header, ignore le Bearer, réclame un actorUserId qu'on n'envoie pas (400 sur tout
+  // le lot de sync) et borne l'organisation à celle de la clé — les écrans afficheraient
+  // les données d'une autre organisation que celle de l'utilisateur connecté.
+  if (config.url?.startsWith('/api/auth/')) {
+    config.headers['x-api-key'] = API_KEY;
+  }
+
   return config;
 });
 

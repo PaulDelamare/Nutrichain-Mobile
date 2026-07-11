@@ -55,11 +55,13 @@ export async function getPendingOperations(now: number, limit: number): Promise<
 export async function saveOperationUpdates(updates: OperationUpdate[]): Promise<void> {
   const db = await getDatabase();
 
-  // Transaction : un verdict partiellement appliqué renverrait des opérations déjà
-  // enregistrées côté serveur, ou en perdrait d'autres.
-  await db.withTransactionAsync(async () => {
+  // Transaction EXCLUSIVE : `withTransactionAsync` n'isole pas les requêtes émises en
+  // parallèle sur la même connexion — une réception enregistrée pendant la synchro serait
+  // aspirée dans la transaction, et un rollback effacerait un scan que l'écran a déjà
+  // annoncé comme sauvegardé.
+  await db.withExclusiveTransactionAsync(async (tx) => {
     for (const update of updates) {
-      await db.runAsync(
+      await tx.runAsync(
         `UPDATE operations
             SET status = ?, attempts = ?, next_attempt_at = ?, error = ?, server_id = ?
           WHERE client_op_id = ?`,

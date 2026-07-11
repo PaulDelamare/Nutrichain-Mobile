@@ -17,6 +17,18 @@ function retry(operation: QueuedOperation, now: number, message: string | null):
   };
 }
 
+/** Verdict rendu sans passer par la réponse 207 : le lot entier a été refusé (400). */
+export function rejectOutcome(operation: QueuedOperation, message: string): OperationUpdate {
+  return {
+    clientOpId: operation.clientOpId,
+    status: 'REJECTED',
+    attempts: operation.attempts,
+    nextAttemptAt: 0,
+    error: message,
+    serverId: null,
+  };
+}
+
 /**
  * Décide du sort local d'une opération à partir du verdict du serveur (réponse 207).
  * `result` est absent si le serveur n'a rien dit de cette opération (réponse tronquée) :

@@ -69,12 +69,46 @@ describe('syncPendingOperations', () => {
     expect(queue.saveOperationUpdates).not.toHaveBeenCalled();
   });
 
+  it('vide la file lot par lot, sans exiger un nouvel appui', async () => {
+    // Une file de 250 scans ne doit pas demander trois fois « Synchroniser ».
+    queue.getPendingOperations
+      .mockResolvedValueOnce([operation('op-1')])
+      .mockResolvedValueOnce([operation('op-2')])
+      .mockResolvedValue([]);
+
+    // Le serveur accepte tout : la boucle ne s'arrête donc que file vide.
+    apiClient.defaults.adapter = (async (config: InternalAxiosRequestConfig) => {
+      const { items } = JSON.parse(String(config.data)) as { items: { clientOpId: string }[] };
+      return {
+        data: multiStatus(items.map(({ clientOpId }) => ({ clientOpId, status: 'ok' }))),
+        status: 207,
+        statusText: '',
+        headers: {},
+        config,
+      };
+    }) as AxiosAdapter;
+
+    const summary = await syncPendingOperations();
+
+    expect(summary).toMatchObject({ sent: 2, synced: 2 });
+    expect(queue.getPendingOperations).toHaveBeenCalledTimes(3);
+  });
+
+  it('ignore un second envoi lancé pendant le premier', async () => {
+    // Sync automatique au retour du réseau + appui manuel : sans verrou, le même lot
+    // partirait deux fois et le verdict du plus lent écraserait celui du plus rapide.
+    queue.getPendingOperations.mockResolvedValueOnce([operation('op-1')]).mockResolvedValue([]);
+    respondWith(207, multiStatus([{ clientOpId: 'op-1', status: 'ok' }]));
+
+    const [first, second] = await Promise.all([syncPendingOperations(), syncPendingOperations()]);
+
+    expect(first.sent + second.sent).toBe(1);
+  });
+
   it('envoie les opérations en attente et applique chaque verdict du serveur', async () => {
-    queue.getPendingOperations.mockResolvedValue([
-      operation('op-1'),
-      operation('op-2'),
-      operation('op-3'),
-    ]);
+    queue.getPendingOperations
+      .mockResolvedValueOnce([operation('op-1'), operation('op-2'), operation('op-3')])
+      .mockResolvedValue([]);
     const request = respondWith(
       207,
       multiStatus([
@@ -95,7 +129,7 @@ describe('syncPendingOperations', () => {
 
   it('renvoie exactement le clientOpId d’origine, jamais un nouveau', async () => {
     // Régénérer l'identifiant ferait perdre l'idempotence : le serveur créerait un doublon.
-    queue.getPendingOperations.mockResolvedValue([operation('op-stable')]);
+    queue.getPendingOperations.mockResolvedValueOnce([operation('op-stable')]).mockResolvedValue([]);
     const request = respondWith(207, multiStatus([{ clientOpId: 'op-stable', status: 'ok' }]));
 
     await syncPendingOperations();
@@ -119,7 +153,9 @@ describe('syncPendingOperations', () => {
   it('replanifie tout le lot quand la requête échoue, sans rien perdre', async () => {
     // Réseau coupé en plein envoi : les opérations restent PENDING, avec un délai
     // avant nouvelle tentative pour ne pas marteler le serveur au retour du réseau.
-    queue.getPendingOperations.mockResolvedValue([operation('op-1'), operation('op-2')]);
+    queue.getPendingOperations
+      .mockResolvedValueOnce([operation('op-1'), operation('op-2')])
+      .mockResolvedValue([]);
     apiClient.defaults.adapter = (async () => {
       throw new AxiosError('Network Error');
     }) as AxiosAdapter;
@@ -133,8 +169,56 @@ describe('syncPendingOperations', () => {
     expect(updates.every((u) => u.nextAttemptAt > Date.now())).toBe(true);
   });
 
+  it('isole l’opération fautive quand le serveur refuse le lot entier (400)', async () => {
+    // La validation serveur est fail-fast : un seul item malformé fait rejeter les 100.
+    // Sans dichotomie, la file resterait gelée pour toujours — ou tous les scans valides
+    // seraient sacrifiés avec le coupable.
+    queue.getPendingOperations
+      .mockResolvedValueOnce([operation('bon'), operation('mauvais')])
+      .mockResolvedValue([]);
+
+    let call = 0;
+    apiClient.defaults.adapter = (async (config: InternalAxiosRequestConfig) => {
+      call += 1;
+      const { items } = JSON.parse(String(config.data)) as { items: { clientOpId: string }[] };
+      const contientLeMauvais = items.some((item) => item.clientOpId === 'mauvais');
+
+      if (contientLeMauvais) {
+        const response = {
+          data: { status: 400, error: [{ field: 'shipment_id', message: 'Trop long' }] },
+          status: 400,
+          statusText: '',
+          headers: {},
+          config,
+        };
+        const error = new AxiosError('Bad Request', undefined, config, null, response);
+        error.response = response;
+        throw error;
+      }
+
+      return {
+        data: multiStatus(items.map((item) => ({ clientOpId: item.clientOpId, status: 'ok' }))),
+        status: 207,
+        statusText: '',
+        headers: {},
+        config,
+      };
+    }) as AxiosAdapter;
+
+    const summary = await syncPendingOperations();
+
+    expect(call).toBeGreaterThan(1);
+    expect(summary).toMatchObject({ synced: 1, rejected: 1 });
+
+    const updates = queue.saveOperationUpdates.mock.calls.flatMap((c) => c[0]);
+    expect(updates.find((u) => u.clientOpId === 'bon')?.status).toBe('SYNCED');
+    expect(updates.find((u) => u.clientOpId === 'mauvais')?.status).toBe('REJECTED');
+  });
+
   it('réessaie les erreurs serveur transitoires uniquement', async () => {
-    queue.getPendingOperations.mockResolvedValue([operation('op-1'), operation('op-2')]);
+    queue.getPendingOperations
+      .mockResolvedValueOnce([operation('op-1'), operation('op-2')])
+      .mockResolvedValue([]);
     respondWith(
       207,
       multiStatus([
