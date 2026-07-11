@@ -11,7 +11,12 @@ export interface ReceiptPayload {
 }
 
 export interface QueuedOperation {
-  /** UUID v4 généré au scan et JAMAIS régénéré : c'est la clé d'idempotence de l'API. */
+  /**
+   * UUID v4 généré au scan : c'est la clé d'idempotence de l'API, et un rejeu doit la
+   * conserver telle quelle, sous peine de créer un doublon en base.
+   * Seule exception : `requeueOperation`, qui renvoie une opération BLOQUÉE — dont le
+   * serveur n'a jamais rien enregistré — sous une clé neuve.
+   */
   clientOpId: string;
   type: 'receipt';
   payload: ReceiptPayload;

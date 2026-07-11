@@ -1,5 +1,13 @@
 import { getDatabase } from '../db';
-import { enqueueReceipt, getPendingOperations, saveOperationUpdates } from './queue';
+import {
+  deleteOperation,
+  enqueueReceipt,
+  flagStalePending,
+  getPendingOperations,
+  purgeSyncedBefore,
+  requeueOperation,
+  saveOperationUpdates,
+} from './queue';
 import type { ReceiptPayload } from './types';
 
 /**
@@ -32,10 +40,22 @@ const fakeDatabase = {
     queries.push({ sql, params });
     return [];
   }),
+  getFirstAsync: jest.fn(async (sql: string, ...params: unknown[]) => {
+    queries.push({ sql, params });
+    return null as unknown;
+  }),
   withExclusiveTransactionAsync: jest.fn(async (run: (tx: unknown) => Promise<void>) => {
     await run(fakeDatabase);
   }),
 };
+
+/** Remplace la réponse du SELECT sans perdre l'enregistrement de la requête émise. */
+function firstRowIs(row: unknown): void {
+  fakeDatabase.getFirstAsync.mockImplementation(async (sql: string, ...params: unknown[]) => {
+    queries.push({ sql, params });
+    return row;
+  });
+}
 
 const PAYLOAD: ReceiptPayload = {
   id_fournisseur: 'f-1',
@@ -91,6 +111,91 @@ describe('getPendingOperations', () => {
 
     const [select] = queries;
     expect(select.sql).toContain('LIMIT ?');
+  });
+});
+
+describe('remédiation d’une opération bloquée', () => {
+  it('renvoie l’opération sous un NOUVEL identifiant', async () => {
+    // Rejouer une opération en conflit sous son identifiant d'origine la ferait
+    // reconflicter indéfiniment : le serveur a déjà enregistré autre chose sous cette clé.
+    // Un renvoi est donc, pour lui, une opération neuve — au même contenu.
+    firstRowIs({ payload: JSON.stringify(PAYLOAD), type: 'receipt' });
+
+    const clientOpId = await requeueOperation('op-en-conflit');
+
+    expect(clientOpId).not.toBe('op-en-conflit');
+    expect(clientOpId).toMatch(/^[0-9a-f-]{36}$/i);
+
+    const insert = queries.find((query) => query.sql.includes('INSERT'));
+    expect(JSON.parse(String(insert?.params[1]))).toEqual(PAYLOAD);
+
+    // L'ancienne ligne disparaît : la laisser afficherait deux fois le même scan.
+    const remove = queries.find((query) => query.sql.includes('DELETE'));
+    expect(remove?.params).toContain('op-en-conflit');
+  });
+
+  it('insère et supprime dans une seule transaction', async () => {
+    // Une app tuée entre les deux laisserait la copie ET l'originale : l'opérateur,
+    // voyant son scan toujours bloqué, le renverrait — deux réceptions pour une palette.
+    firstRowIs({ payload: JSON.stringify(PAYLOAD), type: 'receipt' });
+
+    await requeueOperation('op-en-conflit');
+
+    expect(fakeDatabase.withExclusiveTransactionAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('ne renvoie que depuis un état bloqué', async () => {
+    // Renvoyer une opération déjà synchronisée créerait un doublon ; en renvoyer une
+    // encore en vol ferait perdre son verdict.
+    firstRowIs(null);
+
+    await expect(requeueOperation('op-synchronisee')).rejects.toThrow();
+
+    const select = queries.find((query) => query.sql.includes('SELECT'));
+    expect(select?.sql).toContain("status IN ('CONFLICT', 'REJECTED')");
+  });
+
+  it('refuse de renvoyer un type d’opération qu’il ne sait pas reconstruire', async () => {
+    // Le jour où une expédition existera, la réinsérer en 'receipt' enverrait un payload
+    // étranger au mauvais handler serveur.
+    firstRowIs({ payload: '{}', type: 'shipment' });
+
+    await expect(requeueOperation('op-expedition')).rejects.toThrow(/shipment/);
+  });
+
+  it('ne supprime une opération que si elle est bloquée', async () => {
+    await deleteOperation('op-1');
+
+    const [remove] = queries;
+    expect(remove.sql).toContain('DELETE');
+    expect(remove.sql).toContain("status IN ('CONFLICT', 'REJECTED')");
+    expect(remove.params).toEqual(['op-1']);
+  });
+});
+
+describe('rétention locale', () => {
+  it('ne purge QUE l’historique synchronisé, et seulement passé le délai', async () => {
+    // Le mutant qui retire ce filtre supprime les scans en attente au démarrage de l'app :
+    // perte définitive et silencieuse de scans terrain.
+    await purgeSyncedBefore(1_700_000_000_000);
+
+    const [remove] = queries;
+    expect(remove.sql).toContain('DELETE');
+    expect(remove.sql).toContain("status = 'SYNCED'");
+    expect(remove.sql).toContain('created_at < ?');
+    expect(remove.params).toEqual([1_700_000_000_000]);
+  });
+
+  it('signale les opérations en attente au-delà du TTL au lieu de les rejouer', async () => {
+    // Leur clé d'idempotence a expiré côté serveur : si la réception avait été commitée et
+    // que seule la réponse s'était perdue, les rejouer créerait un doublon en base.
+    await flagStalePending(1_700_000_000_000, 'À vérifier');
+
+    const [update] = queries;
+    expect(update.sql).toContain("SET status = 'CONFLICT'");
+    expect(update.sql).toContain("status = 'PENDING'");
+    expect(update.sql).toContain('created_at < ?');
+    expect(update.params).toEqual(['À vérifier', 1_700_000_000_000]);
   });
 });
 

@@ -1,13 +1,25 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 
-import { countByStatus, listOperations } from '@/lib/sync/queue';
+import { getErrorMessage } from '@/lib/errors';
+import { countByStatus, deleteOperation, listOperations, requeueOperation } from '@/lib/sync/queue';
 import { syncPendingOperations } from '@/lib/sync/sync';
 import type { OperationStatus, QueuedOperation } from '@/lib/sync/types';
+
+/** Une opération bloquée ne repartira jamais seule : sans action, le scan est perdu. */
+const BLOCKED_STATUSES: OperationStatus[] = ['CONFLICT', 'REJECTED'];
 
 const STATUS_STYLE: Record<OperationStatus, { label: string; color: string; background: string }> = {
   PENDING: { label: 'En attente', color: '#B45309', background: '#FEF3C7' },
@@ -21,6 +33,10 @@ export default function SyncScreen() {
   const [operations, setOperations] = useState<QueuedOperation[]>([]);
   const [pending, setPending] = useState(0);
   const [syncing, setSyncing] = useState(false);
+  // Un renvoi crée une opération neuve : deux appuis rapides créeraient deux réceptions
+  // en base pour une seule palette. C'est le seul chemin qui contourne l'idempotence.
+  const inFlight = useRef(new Set<string>());
+  const [busy, setBusy] = useState<string[]>([]);
 
   const refresh = useCallback(async () => {
     const [counts, list] = await Promise.all([countByStatus(), listOperations()]);
@@ -33,6 +49,77 @@ export default function SyncScreen() {
       refresh();
     }, [refresh])
   );
+
+  const runExclusively = async (clientOpId: string, action: () => Promise<void>) => {
+    // La garde vit dans une ref, pas dans l'état : `setBusy` est asynchrone, et deux appuis
+    // dans le même tick liraient tous deux une liste vide — donc deux réceptions en base.
+    if (inFlight.current.has(clientOpId)) return;
+    inFlight.current.add(clientOpId);
+    setBusy((current) => [...current, clientOpId]);
+
+    try {
+      await action();
+    } finally {
+      inFlight.current.delete(clientOpId);
+      setBusy((current) => current.filter((id) => id !== clientOpId));
+    }
+  };
+
+  const requeue = (operation: QueuedOperation) =>
+    runExclusively(operation.clientOpId, async () => {
+      try {
+        await requeueOperation(operation.clientOpId);
+        Toast.show({
+          type: 'success',
+          text1: 'Opération remise en file',
+          text2:
+            operation.status === 'REJECTED'
+              ? 'Elle sera de nouveau rejetée si la donnée en cause n’a pas été corrigée.'
+              : 'Elle repartira à la prochaine synchronisation.',
+        });
+        await refresh();
+        syncPendingOperations().catch(() => undefined);
+      } catch (error: unknown) {
+        Toast.show({ type: 'error', text1: 'Renvoi impossible', text2: getErrorMessage(error) });
+      }
+    });
+
+  const confirmRequeue = (operation: QueuedOperation) => {
+    // Renvoyer écrit dans le registre de traçabilité : c'est l'action risquée, pas la
+    // suppression (un scan supprimé peut être refait ; une réception en double, non).
+    Alert.alert(
+      'Renvoyer cette opération ?',
+      'Elle sera transmise comme une nouvelle réception.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Renvoyer', onPress: () => requeue(operation) },
+      ]
+    );
+  };
+
+  const confirmDelete = (clientOpId: string) => {
+    Alert.alert('Supprimer cette opération ?', 'Le scan sera définitivement abandonné.', [
+      { text: 'Annuler', style: 'cancel' },
+      {
+        text: 'Supprimer',
+        style: 'destructive',
+        onPress: () =>
+          runExclusively(clientOpId, async () => {
+            try {
+              await deleteOperation(clientOpId);
+              await refresh();
+            } catch (error: unknown) {
+              // Sans ce message, l'opérateur croirait le scan supprimé alors qu'il est resté.
+              Toast.show({
+                type: 'error',
+                text1: 'Suppression impossible',
+                text2: getErrorMessage(error),
+              });
+            }
+          }),
+      },
+    ]);
+  };
 
   const handleSync = async () => {
     setSyncing(true);
@@ -89,18 +176,47 @@ export default function SyncScreen() {
         }
         renderItem={({ item }) => {
           const style = STATUS_STYLE[item.status];
+          const isBlocked = BLOCKED_STATUSES.includes(item.status);
+          const isBusy = busy.includes(item.clientOpId);
+
           return (
             <View style={styles.row}>
-              <View style={styles.rowMain}>
-                <Text style={styles.rowTitle}>Réception · {item.payload.shipment_id}</Text>
-                <Text style={styles.rowSubtitle}>
-                  {item.payload.quantite_actuelle} {item.payload.unite_code}
-                  {item.attempts > 0 ? ` · ${item.attempts} tentative(s)` : ''}
-                </Text>
+              <View style={styles.rowHeader}>
+                <View style={styles.rowMain}>
+                  <Text style={styles.rowTitle}>Réception · {item.payload.shipment_id}</Text>
+                  <Text style={styles.rowSubtitle}>
+                    {item.payload.quantite_actuelle} {item.payload.unite_code}
+                    {item.attempts > 0 ? ` · ${item.attempts} tentative(s)` : ''}
+                  </Text>
+                </View>
+                <View style={[styles.badge, { backgroundColor: style.background }]}>
+                  <Text style={[styles.badgeText, { color: style.color }]}>{style.label}</Text>
+                </View>
               </View>
-              <View style={[styles.badge, { backgroundColor: style.background }]}>
-                <Text style={[styles.badgeText, { color: style.color }]}>{style.label}</Text>
-              </View>
+
+              {isBlocked && (
+                <View style={styles.actions}>
+                  <TouchableOpacity
+                    style={[styles.action, isBusy && styles.actionDisabled]}
+                    onPress={() => confirmRequeue(item)}
+                    disabled={isBusy}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="refresh-outline" size={15} color="#0D9488" />
+                    <Text style={styles.actionText}>Renvoyer</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.action, isBusy && styles.actionDisabled]}
+                    onPress={() => confirmDelete(item.clientOpId)}
+                    disabled={isBusy}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="trash-outline" size={15} color="#B91C1C" />
+                    <Text style={[styles.actionText, styles.actionTextDanger]}>Supprimer</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           );
         }}
@@ -128,16 +244,38 @@ const styles = StyleSheet.create({
   list: { paddingVertical: 20, gap: 10 },
   empty: { textAlign: 'center', color: '#9CA3AF', marginTop: 32 },
   row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: 14,
     borderWidth: 1,
     borderColor: '#F3F4F6',
+    gap: 12,
+  },
+  rowHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   rowMain: { flex: 1, gap: 2 },
+  actions: {
+    flexDirection: 'row',
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingTop: 10,
+  },
+  action: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#F9FAFB',
+  },
+  actionDisabled: { opacity: 0.4 },
+  actionText: { fontSize: 13, fontWeight: '600', color: '#0D9488' },
+  actionTextDanger: { color: '#B91C1C' },
   rowTitle: { fontSize: 14, fontWeight: '600', color: '#111827' },
   rowSubtitle: { fontSize: 12, color: '#6B7280' },
   badge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },

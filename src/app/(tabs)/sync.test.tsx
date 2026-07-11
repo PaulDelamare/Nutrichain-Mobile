@@ -1,0 +1,132 @@
+import { render, screen, waitFor, fireEvent } from '@testing-library/react-native';
+import { Alert } from 'react-native';
+
+import { countByStatus, deleteOperation, listOperations, requeueOperation } from '@/lib/sync/queue';
+import { syncPendingOperations } from '@/lib/sync/sync';
+import type { OperationStatus, QueuedOperation } from '@/lib/sync/types';
+
+import SyncScreen from './sync';
+
+jest.mock('@/lib/sync/queue');
+jest.mock('@/lib/sync/sync');
+jest.mock('expo-router', () => ({ useFocusEffect: (effect: () => void) => effect() }));
+jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
+
+const queue = jest.mocked({ countByStatus, deleteOperation, listOperations, requeueOperation });
+const mockedSync = jest.mocked(syncPendingOperations);
+
+function operation(status: OperationStatus): QueuedOperation {
+  return {
+    clientOpId: `op-${status}`,
+    type: 'receipt',
+    payload: {
+      id_fournisseur: 'f-1',
+      shipment_id: `SHIP-${status}`,
+      id_produit: 'p-1',
+      quantite_actuelle: 12,
+      unite_code: 'kg',
+      statut_controle: 'OK',
+    },
+    status,
+    attempts: 0,
+  };
+}
+
+function withOperations(...operations: QueuedOperation[]): void {
+  queue.listOperations.mockResolvedValue(operations);
+  queue.countByStatus.mockResolvedValue({ PENDING: 0, SYNCED: 0, CONFLICT: 0, REJECTED: 0 });
+}
+
+/** Les deux actions passent par une confirmation : on joue le bouton de l'alerte. */
+function confirmAlert(label: string): void {
+  const [, , buttons] = jest.mocked(Alert.alert).mock.calls.at(-1) as unknown as [
+    string,
+    string,
+    { text: string; onPress?: () => void }[],
+  ];
+  buttons.find((button) => button.text === label)?.onPress?.();
+}
+
+describe('écran de synchronisation', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    queue.requeueOperation.mockResolvedValue('nouvel-id');
+    queue.deleteOperation.mockResolvedValue(undefined);
+    mockedSync.mockResolvedValue({ sent: 0, synced: 0, conflicts: 0, rejected: 0, retried: 0 });
+  });
+
+  it('renvoie une opération rejetée après confirmation, sinon le scan est perdu', async () => {
+    withOperations(operation('REJECTED'));
+
+    render(<SyncScreen />);
+
+    await waitFor(() => expect(screen.getByText('Renvoyer')).toBeTruthy());
+    fireEvent.press(screen.getByText('Renvoyer'));
+
+    // Un renvoi écrit dans le registre de traçabilité : il ne part pas sur un simple effleurement.
+    expect(queue.requeueOperation).not.toHaveBeenCalled();
+
+    confirmAlert('Renvoyer');
+
+    await waitFor(() => expect(queue.requeueOperation).toHaveBeenCalledWith('op-REJECTED'));
+  });
+
+  it('supprime réellement l’opération quand la suppression est confirmée', async () => {
+    withOperations(operation('REJECTED'));
+
+    render(<SyncScreen />);
+
+    await waitFor(() => expect(screen.getByText('Supprimer')).toBeTruthy());
+    fireEvent.press(screen.getByText('Supprimer'));
+    confirmAlert('Supprimer');
+
+    await waitFor(() => expect(queue.deleteOperation).toHaveBeenCalledWith('op-REJECTED'));
+  });
+
+  it('ne renvoie qu’une seule fois malgré un double appui', async () => {
+    // Sans verrou, deux appuis créeraient deux réceptions en base pour une seule palette :
+    // c'est le seul chemin qui contourne l'idempotence du serveur.
+    withOperations(operation('CONFLICT'));
+
+    render(<SyncScreen />);
+
+    await waitFor(() => expect(screen.getByText('Renvoyer')).toBeTruthy());
+
+    let resolveRequeue: (id: string) => void = () => undefined;
+    queue.requeueOperation.mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolveRequeue = resolve;
+      })
+    );
+
+    fireEvent.press(screen.getByText('Renvoyer'));
+    confirmAlert('Renvoyer');
+    fireEvent.press(screen.getByText('Renvoyer'));
+    confirmAlert('Renvoyer');
+
+    resolveRequeue('nouvel-id');
+
+    await waitFor(() => expect(queue.requeueOperation).toHaveBeenCalledTimes(1));
+  });
+
+  it('propose de renvoyer une opération en conflit', async () => {
+    withOperations(operation('CONFLICT'));
+
+    render(<SyncScreen />);
+
+    await waitFor(() => expect(screen.getByText('Renvoyer')).toBeTruthy());
+    expect(screen.getByText('Supprimer')).toBeTruthy();
+  });
+
+  it("n'offre aucune action sur une opération en attente ou déjà synchronisée", async () => {
+    // Supprimer un scan encore en vol, ou en double, n'a aucun sens.
+    withOperations(operation('PENDING'), operation('SYNCED'));
+
+    render(<SyncScreen />);
+
+    await waitFor(() => expect(screen.getByText('Réception · SHIP-PENDING')).toBeTruthy());
+    expect(screen.queryByText('Renvoyer')).toBeNull();
+    expect(screen.queryByText('Supprimer')).toBeNull();
+  });
+});
