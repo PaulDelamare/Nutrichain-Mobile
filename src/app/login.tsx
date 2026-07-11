@@ -34,9 +34,12 @@ export default function LoginScreen() {
 
   const passwordRef = useRef<TextInput>(null);
 
-  const [fontsLoaded] = useFonts({ Rajdhani_400Regular, Rajdhani_700Bold });
+  const [fontsLoaded, fontError] = useFonts({ Rajdhani_400Regular, Rajdhani_700Bold });
 
-  if (!fontsLoaded) return null;
+  // Une police n'est qu'un habillage : elle ne doit jamais empêcher de se connecter. L'erreur
+  // de `useFonts` était ignorée, donc une police introuvable laissait l'écran VIDE À VIE —
+  // application morte, sans message, et sans diagnostic possible sur le terrain.
+  if (!fontsLoaded && !fontError) return null;
 
   const isEmailValid = email.length > 0 && EMAIL_REGEX.test(email);
   const isFormValid = isEmailValid && password.length > 0;
