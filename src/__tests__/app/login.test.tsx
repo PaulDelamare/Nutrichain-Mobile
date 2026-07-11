@@ -5,7 +5,7 @@ import { router } from 'expo-router';
 import { signIn } from '@/lib/api';
 import { ApiError } from '@/lib/errors';
 
-import LoginScreen from './login';
+import LoginScreen from '@/app/login';
 
 jest.mock('@expo-google-fonts/rajdhani', () => ({
   useFonts: jest.fn(),

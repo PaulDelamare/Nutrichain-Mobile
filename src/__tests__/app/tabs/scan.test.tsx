@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { router } from 'expo-router';
 
-import ScanScreen from './scan';
+import ScanScreen from '@/app/(tabs)/scan';
 
 const mockOnBarcodeScanned = { current: undefined as ((result: { data: string }) => void) | undefined };
 

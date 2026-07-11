@@ -18,7 +18,7 @@ import Toast from 'react-native-toast-message';
 
 import { OptionPicker } from '@/components/option-picker';
 import { loadProducts, loadSuppliers, type Product, type Supplier } from '@/lib/catalog';
-import { getErrorMessage } from '@/lib/errors';
+import { toastError } from '@/lib/toast';
 import { enqueueReceipt } from '@/lib/sync/queue';
 import { SHIPMENT_ID_MAX_LENGTH, buildReceipt } from '@/lib/sync/receipt';
 import { syncPendingOperations } from '@/lib/sync/sync';
@@ -60,7 +60,7 @@ export default function ReceptionScreen() {
         setProducts(loadedProducts);
       })
       .catch((error: unknown) => {
-        Toast.show({ type: 'error', text1: 'Catalogue indisponible', text2: getErrorMessage(error) });
+        toastError('Catalogue indisponible', error);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -85,7 +85,7 @@ export default function ReceptionScreen() {
       // Tentative opportuniste : si le réseau est là, l'opération part immédiatement.
       syncPendingOperations().catch(() => undefined);
     } catch (error: unknown) {
-      Toast.show({ type: 'error', text1: 'Enregistrement impossible', text2: getErrorMessage(error) });
+      toastError('Enregistrement impossible', error);
     } finally {
       setSaving(false);
     }

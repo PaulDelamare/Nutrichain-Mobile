@@ -21,9 +21,8 @@ import {
 import Toast from 'react-native-toast-message';
 
 import { signIn } from '@/lib/api';
-import { getErrorMessage } from '@/lib/errors';
-
-import { BRAND_GRADIENT } from '@/lib/theme';
+import { BRAND, BRAND_GRADIENT } from '@/lib/theme';
+import { toastError } from '@/lib/toast';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -60,12 +59,8 @@ export default function LoginScreen() {
       });
       router.replace('/(tabs)');
     } catch (err) {
-      Toast.show({
-        type: 'error',
-        text1: 'Erreur de connexion',
-        text2: getErrorMessage(err),
-        visibilityTime: 4000,
-      });
+      // `visibilityTime: 4000` retiré : c'est déjà le défaut de la librairie.
+      toastError('Erreur de connexion', err);
     } finally {
       setLoading(false);
     }
@@ -73,7 +68,7 @@ export default function LoginScreen() {
 
   return (
     <LinearGradient
-      colors={['#0F3D36', '#1A5C52', '#0D9488']}
+      colors={['#0F3D36', '#1A5C52', BRAND.primary]}
       locations={[0, 0.45, 1]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
