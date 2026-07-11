@@ -16,14 +16,21 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 
+import { LocationScanner } from '@/components/location-scanner';
 import { OptionPicker } from '@/components/option-picker';
 import { loadProducts, loadSuppliers, type Product, type Supplier } from '@/lib/catalog';
-import { toastError } from '@/lib/toast';
+import {
+  findEquipmentByCode,
+  isStorageEquipment,
+  loadEquipment,
+  type Equipment,
+} from '@/lib/equipment';
 import { enqueueReceipt } from '@/lib/sync/queue';
 import { SHIPMENT_ID_MAX_LENGTH, buildReceipt } from '@/lib/sync/receipt';
 import { syncPendingOperations } from '@/lib/sync/sync';
-import { BRAND, HEADER_GRADIENT } from '@/lib/theme';
 import type { ReceiptPayload } from '@/lib/sync/types';
+import { BRAND, HEADER_GRADIENT } from '@/lib/theme';
+import { toastError } from '@/lib/toast';
 
 const CONTROL_STATUSES: ReceiptPayload['statut_controle'][] = [
   'OK',
@@ -38,6 +45,7 @@ export default function ReceptionScreen() {
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [supplierId, setSupplierId] = useState('');
@@ -46,6 +54,8 @@ export default function ReceptionScreen() {
   const [quantity, setQuantity] = useState('');
   const [unit, setUnit] = useState('');
   const [status, setStatus] = useState<ReceiptPayload['statut_controle']>('OK');
+  const [location, setLocation] = useState<Equipment | null>(null);
+  const [scanningLocation, setScanningLocation] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Les unités viennent des produits, jamais d'une liste codée en dur : elles sont des
@@ -54,6 +64,9 @@ export default function ReceptionScreen() {
   const units = [...new Set(products.map((product) => product.unite_reference))];
 
   useEffect(() => {
+    // Le catalogue est indispensable à la saisie ; l'emplacement ne l'est pas. Les charger
+    // ensemble ferait échouer TOUTE la réception dès que la liste des matériels manque du
+    // cache — ce qui est le cas au premier lancement hors réseau après une mise à jour.
     Promise.all([loadSuppliers(), loadProducts()])
       .then(([loadedSuppliers, loadedProducts]) => {
         setSuppliers(loadedSuppliers);
@@ -63,9 +76,47 @@ export default function ReceptionScreen() {
         toastError('Catalogue indisponible', error);
       })
       .finally(() => setLoading(false));
+
+    loadEquipment()
+      .then(setEquipment)
+      .catch(() => setEquipment([]));
   }, []);
 
-  const receipt = buildReceipt({ supplierId, productId, shipmentId, quantity, unit, status });
+  const handleLocationScan = (scannedCode: string) => {
+    const found = findEquipmentByCode(scannedCode, equipment);
+    setScanningLocation(false);
+
+    if (!found) {
+      // Un code produit scanné par mégarde ne doit jamais passer pour un emplacement.
+      Toast.show({
+        type: 'error',
+        text1: 'Emplacement inconnu',
+        text2: 'Ce code ne correspond à aucun matériel de votre organisation.',
+      });
+      return;
+    }
+
+    if (!isStorageEquipment(found)) {
+      Toast.show({
+        type: 'error',
+        text1: `${found.nom} n'est pas un lieu de stockage`,
+        text2: 'Scannez un frigo, un congélateur ou une étagère.',
+      });
+      return;
+    }
+
+    setLocation(found);
+  };
+
+  const receipt = buildReceipt({
+    supplierId,
+    productId,
+    shipmentId,
+    quantity,
+    unit,
+    status,
+    equipmentId: location?.id,
+  });
 
   const handleSubmit = async () => {
     if (!receipt || saving) return;
@@ -166,6 +217,42 @@ export default function ReceptionScreen() {
               onSelect={(value) => setStatus(value as ReceiptPayload['statut_controle'])}
             />
 
+            <View style={styles.field}>
+              <Text style={styles.label}>Emplacement de stockage</Text>
+
+              {location ? (
+                <TouchableOpacity
+                  style={styles.location}
+                  onPress={() => setScanningLocation(true)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="location" size={18} color={BRAND.primary} />
+                  <View style={styles.locationText}>
+                    <Text style={styles.locationName}>{location.nom}</Text>
+                    <Text style={styles.locationPlace}>{location.lieu.nom}</Text>
+                  </View>
+                  <Ionicons name="refresh-outline" size={16} color="#6B7280" />
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.scanLocation}
+                  onPress={() => setScanningLocation(true)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="qr-code-outline" size={18} color={BRAND.primary} />
+                  <Text style={styles.scanLocationText}>Scanner l&apos;emplacement</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Sans emplacement, la quarantaine automatique sur excursion de température
+                  ne bloquera JAMAIS ce lot : son frigo peut dériver sans qu'il soit isolé. */}
+              {!location && (
+                <Text style={styles.warning}>
+                  Sans emplacement, ce lot ne sera pas mis en quarantaine si son frigo dérive.
+                </Text>
+              )}
+            </View>
+
             <TouchableOpacity
               style={[styles.submit, !receipt && styles.submitDisabled]}
               onPress={handleSubmit}
@@ -181,6 +268,12 @@ export default function ReceptionScreen() {
           </ScrollView>
         </KeyboardAvoidingView>
       )}
+
+      <LocationScanner
+        visible={scanningLocation}
+        onClose={() => setScanningLocation(false)}
+        onScan={handleLocationScan}
+      />
     </View>
   );
 }
@@ -217,6 +310,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
   },
+  scanLocation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: BRAND.primary,
+    borderStyle: 'dashed',
+    borderRadius: 10,
+    paddingVertical: 14,
+  },
+  scanLocationText: { fontSize: 14, fontWeight: '600', color: BRAND.primary },
+  location: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  locationText: { flex: 1, gap: 2 },
+  locationName: { fontSize: 14, fontWeight: '600', color: '#111827' },
+  locationPlace: { fontSize: 12, color: '#6B7280' },
+  warning: { fontSize: 12, color: '#B45309' },
   submitDisabled: { backgroundColor: '#9CA3AF' },
   submitText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 });
