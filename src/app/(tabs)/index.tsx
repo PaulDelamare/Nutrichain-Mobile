@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
 import {
   Dimensions,
   ScrollView,
@@ -11,27 +12,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useCurrentUser } from '@/hooks/use-current-user';
+import { loadActiveColdAlerts, type Alert } from '@/lib/alerts';
+import { formatRole } from '@/lib/roles';
+import { countByStatus } from '@/lib/sync/queue';
+import type { OperationStatus } from '@/lib/sync/types';
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
-const FAKE_USER = {
-  firstName: 'Marie',
-  lastName: 'L.',
-  role: 'Logistique',
-  site: 'Site Lyon',
-  isOnline: true,
-};
-
-const FAKE_STATS = {
-  scansToday: 47,
-  pendingSync: 0,
-  activeAlerts: 2,
-  receptions: 3,
-};
-
-const FAKE_COLD_ALERT = {
-  visible: true,
-  message: 'Palette SSCC 00 3761… — +4.2 °C',
-};
 
 interface StatCardProps {
   label: string;
@@ -70,6 +57,23 @@ function QuickAction({ icon, iconColor, iconBg, title, subtitle, onPress }: Quic
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
+  const { user } = useCurrentUser();
+  const [counts, setCounts] = useState<Record<OperationStatus, number>>({
+    PENDING: 0,
+    SYNCED: 0,
+    CONFLICT: 0,
+    REJECTED: 0,
+  });
+  const [coldAlerts, setColdAlerts] = useState<Alert[]>([]);
+
+  useFocusEffect(
+    useCallback(() => {
+      countByStatus().then(setCounts);
+      loadActiveColdAlerts().then(setColdAlerts);
+    }, [])
+  );
+
+  const [firstAlert] = coldAlerts;
 
   return (
     <View style={styles.screen}>
@@ -84,15 +88,13 @@ export default function HomeScreen() {
         <View style={styles.headerTopRow}>
           <View>
             <Text style={styles.greeting}>Bonjour,</Text>
-            <Text style={styles.userName}>
-              {FAKE_USER.firstName} {FAKE_USER.lastName}
-            </Text>
-            <View style={styles.roleRow}>
-              <Ionicons name="location-outline" size={12} color="rgba(255,255,255,0.75)" />
-              <Text style={styles.roleText}>
-                {FAKE_USER.role} — {FAKE_USER.site}
-              </Text>
-            </View>
+            <Text style={styles.userName}>{user?.name ?? '…'}</Text>
+            {user?.role && (
+              <View style={styles.roleRow}>
+                <Ionicons name="person-outline" size={12} color="rgba(255,255,255,0.75)" />
+                <Text style={styles.roleText}>{formatRole(user.role)}</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.onlineBadge}>
@@ -103,10 +105,10 @@ export default function HomeScreen() {
 
         {/* Stats grid 2×2 */}
         <View style={styles.statsGrid}>
-          <StatCard label="SCANS AUJOURD'HUI" value={FAKE_STATS.scansToday} />
-          <StatCard label="EN ATTENTE SYNC" value={FAKE_STATS.pendingSync} />
-          <StatCard label="ALERTES ACTIVES" value={FAKE_STATS.activeAlerts} />
-          <StatCard label="RÉCEPTIONS" value={FAKE_STATS.receptions} />
+          <StatCard label="EN ATTENTE SYNC" value={counts.PENDING} />
+          <StatCard label="SYNCHRONISÉES" value={counts.SYNCED} />
+          <StatCard label="ALERTES FROID" value={coldAlerts.length} />
+          <StatCard label="À CORRIGER" value={counts.CONFLICT + counts.REJECTED} />
         </View>
       </LinearGradient>
 
@@ -140,46 +142,30 @@ export default function HomeScreen() {
             iconBg="#FFF7ED"
             title="Réception"
             subtitle="Marchandise entrante"
-            onPress={() => {}}
+            onPress={() => router.navigate('/reception')}
           />
           <QuickAction
-            icon="swap-horizontal-outline"
+            icon="cloud-upload-outline"
             iconColor="#2563EB"
             iconBg="#EFF6FF"
-            title="Mouvement"
-            subtitle="Stockage / expédition"
-            onPress={() => {}}
-          />
-          <QuickAction
-            icon="thermometer-outline"
-            iconColor="#DC2626"
-            iconBg="#FEF2F2"
-            title="Alertes froid"
-            subtitle={`${FAKE_STATS.activeAlerts} incidents`}
-            onPress={() => {}}
-          />
-          <QuickAction
-            icon="warning-outline"
-            iconColor="#DC2626"
-            iconBg="#FEF2F2"
-            title="Quarantaine"
-            subtitle="Lots isolés"
-            onPress={() => {}}
+            title="Synchroniser"
+            subtitle={
+              counts.PENDING === 0 ? 'Tout est à jour' : `${counts.PENDING} en attente`
+            }
+            onPress={() => router.navigate('/sync')}
           />
         </View>
 
-        {/* Cold chain alert banner (conditional) */}
-        {FAKE_COLD_ALERT.visible && (
-          <TouchableOpacity style={styles.alertBanner} activeOpacity={0.85}>
+        {firstAlert && (
+          <View style={styles.alertBanner}>
             <View style={styles.alertIconWrap}>
               <Ionicons name="warning" size={20} color="#D97706" />
             </View>
             <View style={styles.alertContent}>
               <Text style={styles.alertTitle}>Chaîne du froid</Text>
-              <Text style={styles.alertMessage}>{FAKE_COLD_ALERT.message}</Text>
+              <Text style={styles.alertMessage}>{firstAlert.message}</Text>
             </View>
-            <Ionicons name="chevron-forward" size={16} color="#D97706" />
-          </TouchableOpacity>
+          </View>
         )}
       </ScrollView>
     </View>

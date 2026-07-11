@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -13,9 +13,6 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Toast from 'react-native-toast-message';
-
-import type { BarcodeScanningResult } from 'expo-camera';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CAMERA_HEIGHT = SCREEN_WIDTH * 1.05;
@@ -31,38 +28,24 @@ export default function ScanScreen() {
   const [scanned, setScanned] = useState(false);
   const inputRef = useRef<TextInput>(null);
 
-  // ─── Barcode scanned callback ────────────────────────────────
-  const handleBarcodeScan = useCallback(
-    ({ type, data }: BarcodeScanningResult) => {
+  // La caméra émet en rafale : sans ce verrou, un seul code ouvrirait dix fois l'écran.
+  // Il est relâché au retour sur l'onglet, ce qui évite un minuteur à nettoyer.
+  useFocusEffect(useCallback(() => setScanned(false), []));
+
+  const handleCode = useCallback(
+    (code: string) => {
       if (scanned) return;
       setScanned(true);
-      Toast.show({
-        type: 'success',
-        text1: 'Lot scanné',
-        text2: `${type.toUpperCase()} · ${data}`,
-        visibilityTime: 3000,
-      });
-      // Navigate to batch detail — route à créer ultérieurement
-      // router.push({ pathname: '/lot/[id]', params: { id: data } });
-      setTimeout(() => setScanned(false), 3000);
+      router.push({ pathname: '/reception', params: { code } });
     },
     [scanned]
   );
 
-  // ─── Simulate scan ───────────────────────────────────────────
-  const handleSimulate = () => {
-    handleBarcodeScan({
-      type: 'gs1-128',
-      data: '00376112345678901234',
-      bounds: { origin: { x: 0, y: 0 }, size: { width: 0, height: 0 } },
-      cornerPoints: [],
-    });
-  };
+  const handleSimulate = () => handleCode('00376112345678901234');
 
-  // ─── Manual input submit ─────────────────────────────────────
   const handleManualSubmit = () => {
     if (!manualInput.trim()) return;
-    handleBarcodeScan({ type: 'manual', data: manualInput.trim(), bounds: { origin: { x: 0, y: 0 }, size: { width: 0, height: 0 } }, cornerPoints: [] });
+    handleCode(manualInput.trim());
     setManualInput('');
   };
 
@@ -107,7 +90,7 @@ export default function ScanScreen() {
         <CameraView
           style={StyleSheet.absoluteFill}
           facing="back"
-          onBarcodeScanned={handleBarcodeScan}
+          onBarcodeScanned={({ data }) => handleCode(data)}
         />
 
         {/* Dark overlay — top */}
