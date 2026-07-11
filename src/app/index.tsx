@@ -1,20 +1,12 @@
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { Redirect } from 'expo-router';
-import { isAuthenticated } from '@/lib/api';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
+
+import { useAuthStatus } from '@/hooks/use-auth-status';
 
 export default function Index() {
-  const [loading, setLoading] = useState(true);
-  const [authenticated, setAuthenticated] = useState(false);
+  const status = useAuthStatus();
 
-  useEffect(() => {
-    isAuthenticated().then((auth) => {
-      setAuthenticated(auth);
-      setLoading(false);
-    });
-  }, []);
-
-  if (loading) {
+  if (status === 'loading') {
     return (
       <View style={styles.loader}>
         <ActivityIndicator size="large" color="#0D9488" />
@@ -22,7 +14,7 @@ export default function Index() {
     );
   }
 
-  return <Redirect href={authenticated ? '/(tabs)' : '/login'} />;
+  return <Redirect href={status === 'authenticated' ? '/(tabs)' : '/login'} />;
 }
 
 const styles = StyleSheet.create({

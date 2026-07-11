@@ -21,31 +21,10 @@ import {
 } from 'react-native';
 import Toast from 'react-native-toast-message';
 
-import { ApiError, signIn } from '@/lib/api';
+import { signIn } from '@/lib/api';
+import { getErrorMessage } from '@/lib/errors';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function getErrorMessage(err: unknown): string {
-  if (!(err instanceof ApiError)) {
-    return 'Une erreur inattendue est survenue.';
-  }
-  switch (err.status) {
-    case 0:
-      return 'Aucune connexion réseau. Vérifiez votre connexion internet.';
-    case 401:
-      return 'Email ou mot de passe incorrect.';
-    case 403:
-      return 'Votre compte est désactivé. Contactez votre administrateur.';
-    case 422:
-      return "Format d'email invalide ou champs manquants.";
-    case 429:
-      return 'Trop de tentatives de connexion. Veuillez patienter quelques instants.';
-  }
-  if (err.status >= 500) {
-    return 'Service temporairement indisponible. Réessayez dans quelques instants.';
-  }
-  return err.message || 'Une erreur est survenue.';
-}
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -73,10 +52,10 @@ export default function LoginScreen() {
       Toast.show({
         type: 'success',
         text1: 'Connexion réussie',
-        text2: 'Bienvenue sur NutriChain. Redirection…',
+        text2: 'Bienvenue sur NutriChain.',
         visibilityTime: 1800,
       });
-      setTimeout(() => router.replace('/(tabs)'), 1900);
+      router.replace('/(tabs)');
     } catch (err) {
       Toast.show({
         type: 'error',
@@ -141,7 +120,7 @@ export default function LoginScreen() {
                 blurOnSubmit={false}
               />
               {showEmailError && (
-                <Text style={styles.validationError}>Format d'email invalide</Text>
+                <Text style={styles.validationError}>Format d&apos;email invalide</Text>
               )}
             </View>
 
