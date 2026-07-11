@@ -10,11 +10,15 @@ export function useAuthStatus(): AuthStatus {
   useEffect(() => {
     let mounted = true;
 
-    isAuthenticated().then((authenticated) => {
-      if (mounted) {
-        setStatus(authenticated ? 'authenticated' : 'unauthenticated');
-      }
-    });
+    // Toute erreur imprévue doit mener à l'écran de connexion, jamais laisser le statut
+    // bloqué sur 'loading' : l'app resterait figée sur son spinner.
+    isAuthenticated()
+      .catch(() => false)
+      .then((authenticated) => {
+        if (mounted) {
+          setStatus(authenticated ? 'authenticated' : 'unauthenticated');
+        }
+      });
 
     return () => {
       mounted = false;

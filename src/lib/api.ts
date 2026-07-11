@@ -1,4 +1,5 @@
 import axios, { AxiosError } from 'axios';
+import { router } from 'expo-router';
 
 import { ApiError, toApiError } from './errors';
 import { clearToken, getToken, saveToken } from './session';
@@ -6,22 +7,11 @@ import { clearToken, getToken, saveToken } from './session';
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000';
 const API_KEY = process.env.EXPO_PUBLIC_API_KEY ?? '';
 
-export interface AuthUser {
-  id: string;
-  email: string;
-  name: string;
-}
-
-interface SignInResponse {
-  token?: string;
-  user: AuthUser;
-}
-
 export const apiClient = axios.create({
   baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
-    // Exigé par l'API sur /api/auth/* (checkApiKey) : simple portail, pas un secret.
+    // Exigé par l'API sur /api/auth/* (checkApiKey) : simple portail, jamais un secret.
     'x-api-key': API_KEY,
   },
   timeout: 10000,
@@ -40,18 +30,25 @@ apiClient.interceptors.response.use(
   async (error: AxiosError) => {
     const apiError = toApiError(error);
 
-    // Un jeton refusé ne redeviendra jamais valide : le garder ferait échouer
-    // silencieusement toutes les requêtes suivantes.
-    if (apiError.status === 401) {
+    // Un 401 « api_key » accuse la configuration de l'app, pas la session : purger le jeton
+    // ici détruirait une session parfaitement valide, sans espoir de retour.
+    if (apiError.status === 401 && apiError.field !== 'api_key') {
+      const hadSession = (await getToken()) !== null;
       await clearToken();
+
+      // Sans cette redirection, la session expirée laisse l'utilisateur sur des écrans
+      // vides : la garde de navigation ne se réévalue qu'au montage.
+      if (hadSession) {
+        router.replace('/login');
+      }
     }
 
     throw apiError;
   }
 );
 
-export async function signIn(email: string, password: string): Promise<Required<SignInResponse>> {
-  const { data } = await apiClient.post<SignInResponse>('/api/auth/sign-in/email', {
+export async function signIn(email: string, password: string): Promise<void> {
+  const { data } = await apiClient.post<{ token?: string }>('/api/auth/sign-in/email', {
     email,
     password,
   });
@@ -59,11 +56,14 @@ export async function signIn(email: string, password: string): Promise<Required<
   // Better-Auth omet le jeton quand un second facteur est requis : sans ce garde-fou,
   // l'app se croirait connectée et enchaînerait des 401 sur chaque écran.
   if (!data.token) {
-    throw new ApiError('Double authentification non prise en charge par l’application.', 401);
+    throw new ApiError(
+      'Double authentification non prise en charge par l’application.',
+      401,
+      'two_factor'
+    );
   }
 
   await saveToken(data.token);
-  return { ...data, token: data.token };
 }
 
 export async function signOut(): Promise<void> {

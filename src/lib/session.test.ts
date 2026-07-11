@@ -32,4 +32,17 @@ describe('session', () => {
 
     expect(secureStore.deleteItemAsync).toHaveBeenCalledWith('auth_token');
   });
+
+  it('dégrade en « déconnecté » si le coffre est inaccessible', async () => {
+    // Une promesse rompue ici figerait l'app sur son écran de chargement.
+    secureStore.getItemAsync.mockRejectedValue(new Error('Keystore indisponible'));
+
+    await expect(getToken()).resolves.toBeNull();
+  });
+
+  it('n’échoue pas quand l’effacement est impossible', async () => {
+    secureStore.deleteItemAsync.mockRejectedValue(new Error('Keystore indisponible'));
+
+    await expect(clearToken()).resolves.toBeUndefined();
+  });
 });

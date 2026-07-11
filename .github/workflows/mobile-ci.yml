@@ -3,8 +3,9 @@ name: Mobile CI
 on:
   push:
     branches: [main]
+  # Toutes les branches cibles : le travail s'empile aujourd'hui sur des branches
+  # d'intégration, une PR qui ne vise pas `main` doit quand même être validée.
   pull_request:
-    branches: [main]
 
 jobs:
   ci:
