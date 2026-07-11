@@ -12,6 +12,8 @@ export interface ReceiptInput {
   quantity: string;
   unit: string;
   status: ReceiptPayload['statut_controle'];
+  /** Emplacement de stockage, résolu par le scan de l'équipement. Vide si non scanné. */
+  equipmentId?: string;
 }
 
 /**
@@ -43,5 +45,7 @@ export function buildReceipt(input: ReceiptInput): ReceiptPayload | null {
     quantite_actuelle: quantity,
     unite_code: input.unit,
     statut_controle: input.status,
+    // Le serveur valide `id_materiel` comme un UUID : une chaîne vide ferait refuser TOUT le lot.
+    ...(input.equipmentId ? { id_materiel: input.equipmentId } : {}),
   };
 }

@@ -20,6 +20,13 @@ export interface ReceiptPayload {
   quantite_actuelle: number;
   unite_code: string;
   statut_controle: 'OK' | 'ALERTE' | 'NONCONFORME' | 'CONFORME';
+  /**
+   * Emplacement de stockage du lot (matériel → lieu). Optionnel pour le serveur, mais
+   * décisif : la quarantaine automatique sur excursion de température ne bloque QUE les lots
+   * dont l'emplacement pointe sur l'équipement en cause. Un lot reçu sans emplacement ne
+   * serait jamais mis en quarantaine si son frigo dérive.
+   */
+  id_materiel?: string;
 }
 
 export interface QueuedOperation {
