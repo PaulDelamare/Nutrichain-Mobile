@@ -89,7 +89,7 @@ export default function ScanScreen() {
           </Text>
           <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission} activeOpacity={0.85}>
             <LinearGradient colors={['#14B8A6', '#0D9488']} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={styles.permissionBtnGradient}>
-              <Text style={styles.permissionBtnText}>Autoriser l'accès</Text>
+              <Text style={styles.permissionBtnText}>Autoriser l&apos;accès</Text>
             </LinearGradient>
           </TouchableOpacity>
         </View>

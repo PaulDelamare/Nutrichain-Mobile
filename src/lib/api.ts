@@ -1,35 +1,34 @@
 import axios, { AxiosError } from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { ApiError, toApiError } from './errors';
+import { clearToken, getToken, saveToken } from './session';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000';
 const API_KEY = process.env.EXPO_PUBLIC_API_KEY ?? '';
-const AUTH_TOKEN_KEY = 'auth_token';
 
-export class ApiError extends Error {
-  status: number;
-  constructor(message: string, status: number) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-  }
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
 }
 
-interface ApiErrorResponse {
-  message?: string;
-  error?: string;
+interface SignInResponse {
+  token?: string;
+  user: AuthUser;
 }
 
 export const apiClient = axios.create({
   baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
+    // Exigé par l'API sur /api/auth/* (checkApiKey) : simple portail, pas un secret.
     'x-api-key': API_KEY,
   },
   timeout: 10000,
 });
 
 apiClient.interceptors.request.use(async (config) => {
-  const token = await AsyncStorage.getItem(AUTH_TOKEN_KEY);
+  const token = await getToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -38,41 +37,45 @@ apiClient.interceptors.request.use(async (config) => {
 
 apiClient.interceptors.response.use(
   (response) => response,
-  (error: AxiosError<ApiErrorResponse>) => {
-    if (!error.response) {
-      return Promise.reject(new ApiError('Erreur réseau', 0));
+  async (error: AxiosError) => {
+    const apiError = toApiError(error);
+
+    // Un jeton refusé ne redeviendra jamais valide : le garder ferait échouer
+    // silencieusement toutes les requêtes suivantes.
+    if (apiError.status === 401) {
+      await clearToken();
     }
-    const status = error.response.status;
-    const message =
-      error.response.data?.message ??
-      error.response.data?.error ??
-      error.message ??
-      'Une erreur est survenue';
-    return Promise.reject(new ApiError(message, status));
+
+    throw apiError;
   }
 );
 
-export async function signIn(email: string, password: string) {
-  const { data } = await apiClient.post('/api/auth/sign-in/email', { email, password });
-  if (data.token) {
-    await AsyncStorage.setItem(AUTH_TOKEN_KEY, data.token);
+export async function signIn(email: string, password: string): Promise<Required<SignInResponse>> {
+  const { data } = await apiClient.post<SignInResponse>('/api/auth/sign-in/email', {
+    email,
+    password,
+  });
+
+  // Better-Auth omet le jeton quand un second facteur est requis : sans ce garde-fou,
+  // l'app se croirait connectée et enchaînerait des 401 sur chaque écran.
+  if (!data.token) {
+    throw new ApiError('Double authentification non prise en charge par l’application.', 401);
   }
-  return data;
+
+  await saveToken(data.token);
+  return { ...data, token: data.token };
 }
 
-export async function signOut() {
+export async function signOut(): Promise<void> {
   try {
     await apiClient.post('/api/auth/sign-out');
+  } catch {
+    // Déconnexion locale garantie même hors réseau : le jeton est effacé dans tous les cas.
   } finally {
-    await AsyncStorage.removeItem(AUTH_TOKEN_KEY);
+    await clearToken();
   }
-}
-
-export async function getToken(): Promise<string | null> {
-  return AsyncStorage.getItem(AUTH_TOKEN_KEY);
 }
 
 export async function isAuthenticated(): Promise<boolean> {
-  const token = await getToken();
-  return token !== null;
+  return (await getToken()) !== null;
 }
