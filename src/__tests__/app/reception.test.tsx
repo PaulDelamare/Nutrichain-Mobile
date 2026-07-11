@@ -4,7 +4,7 @@ import { loadProducts, loadSuppliers } from '@/lib/catalog';
 import { loadEquipment } from '@/lib/equipment';
 import { ApiError } from '@/lib/errors';
 
-import ReceptionScreen from './reception';
+import ReceptionScreen from '@/app/reception';
 
 jest.mock('@/lib/catalog');
 jest.mock('@/lib/equipment');
