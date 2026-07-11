@@ -1,6 +1,6 @@
 import { render } from '@testing-library/react-native';
 
-import { LocationScanner } from './location-scanner';
+import { CodeScanner } from './code-scanner';
 
 const mockOnBarcodeScanned = { current: undefined as ((r: { data: string }) => void) | undefined };
 
@@ -24,7 +24,7 @@ describe('scanner d’emplacement', () => {
 
   it('ne résout qu’une fois par ouverture, malgré une rafale de la caméra', () => {
     const onScan = jest.fn();
-    render(<LocationScanner visible onClose={jest.fn()} onScan={onScan} />);
+    render(<CodeScanner visible title="Scanner" hint="Placez le code dans le cadre" onClose={jest.fn()} onScan={onScan} />);
 
     mockOnBarcodeScanned.current?.({ data: 'EQP-1' });
     mockOnBarcodeScanned.current?.({ data: 'EQP-1' });
@@ -38,13 +38,13 @@ describe('scanner d’emplacement', () => {
     // dès le premier scan — y compris après une erreur d'emplacement, donc sans recours.
     const onScan = jest.fn();
     const { rerender } = render(
-      <LocationScanner visible onClose={jest.fn()} onScan={onScan} />
+      <CodeScanner visible title="Scanner" hint="Placez le code dans le cadre" onClose={jest.fn()} onScan={onScan} />
     );
 
     mockOnBarcodeScanned.current?.({ data: 'CODE-ERRONE' });
 
-    rerender(<LocationScanner visible={false} onClose={jest.fn()} onScan={onScan} />);
-    rerender(<LocationScanner visible onClose={jest.fn()} onScan={onScan} />);
+    rerender(<CodeScanner visible={false} title="Scanner" hint="Placez le code dans le cadre" onClose={jest.fn()} onScan={onScan} />);
+    rerender(<CodeScanner visible title="Scanner" hint="Placez le code dans le cadre" onClose={jest.fn()} onScan={onScan} />);
 
     mockOnBarcodeScanned.current?.({ data: 'EQP-2' });
 

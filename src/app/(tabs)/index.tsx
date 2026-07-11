@@ -151,6 +151,22 @@ export default function HomeScreen() {
             onPress={() => router.navigate('/reception')}
           />
           <QuickAction
+            icon="flask-outline"
+            iconColor="#7C3AED"
+            iconBg="#F5F3FF"
+            title="Transformation"
+            subtitle="Cuve et lots utilisés"
+            onPress={() => router.navigate('/transformation')}
+          />
+          <QuickAction
+            icon="send-outline"
+            iconColor="#0891B2"
+            iconBg="#ECFEFF"
+            title="Expédition"
+            subtitle="Lots chargés pour un client"
+            onPress={() => router.navigate('/expedition')}
+          />
+          <QuickAction
             icon="cloud-upload-outline"
             iconColor="#2563EB"
             iconBg="#EFF6FF"

@@ -9,3 +9,12 @@ import { getErrorMessage } from './errors';
 export function toastError(title: string, error: unknown): void {
   Toast.show({ type: 'error', text1: title, text2: getErrorMessage(error) });
 }
+
+/**
+ * Un refus métier (lot inconnu, statut bloquant) n'est pas une erreur technique : il n'a rien à
+ * traduire. L'emballer dans un `Error` pour le passer à `toastError` le faisait disparaître —
+ * `getErrorMessage` ne sait lire que les `ApiError` et renvoyait « Une erreur est survenue. ».
+ */
+export function toastMessage(title: string, message: string): void {
+  Toast.show({ type: 'error', text1: title, text2: message });
+}

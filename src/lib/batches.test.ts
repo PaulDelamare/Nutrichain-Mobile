@@ -1,11 +1,119 @@
-import { loadBatch } from './batches';
+import { findBatchByCode, isUsableBatch, loadBatch, loadBatches, type Batch } from './batches';
+import { readCache, writeCache } from './cache';
+import { ApiError } from './errors';
 
+jest.mock('./cache');
 jest.mock('./api', () => ({ apiClient: { get: jest.fn() } }));
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { apiClient } = require('./api') as { apiClient: { get: jest.Mock } };
+const cache = jest.mocked({ readCache, writeCache });
 
 beforeEach(() => jest.clearAllMocks());
+
+function batch(overrides: Partial<Batch> = {}): Batch {
+  return {
+    id: 'b-1',
+    lot_number: '260711-ABC123',
+    statut: 'EN_STOCK',
+    quantite_actuelle: '120',
+    unite_code: 'kg',
+    date_peremption: null,
+    produit: { nom: 'Lait cru' },
+    ...overrides,
+  };
+}
+
+describe('loadBatches', () => {
+  it('met les lots en cache pour le travail hors réseau', async () => {
+    const lots = [batch()];
+    apiClient.get.mockResolvedValue({ data: { data: lots } });
+
+    await expect(loadBatches()).resolves.toEqual(lots);
+    expect(cache.writeCache).toHaveBeenCalledWith('batches', lots);
+  });
+
+  it('retombe sur le cache quand le réseau est coupé', async () => {
+    apiClient.get.mockRejectedValue(new ApiError('Erreur réseau', 0));
+    cache.readCache.mockResolvedValue([batch()]);
+
+    await expect(loadBatches()).resolves.toHaveLength(1);
+  });
+});
+
+describe('findBatchByCode', () => {
+  const lots = [batch(), batch({ id: 'b-2', lot_number: '260711-XYZ789' })];
+
+  it('résout le numéro de lot imprimé sur l’étiquette', () => {
+    expect(findBatchByCode('260711-XYZ789', lots)?.id).toBe('b-2');
+  });
+
+  it('résout aussi l’identifiant du lot', () => {
+    expect(findBatchByCode('b-1', lots)?.id).toBe('b-1');
+  });
+
+  it('ignore la casse et les espaces', () => {
+    expect(findBatchByCode('  260711-abc123 ', lots)?.id).toBe('b-1');
+  });
+
+  it('ne résout rien sur un code étranger', () => {
+    // Un code produit ou une étiquette de frigo ne doit jamais passer pour un lot.
+    expect(findBatchByCode('EQP-ABCDEF0123', lots)).toBeUndefined();
+    expect(findBatchByCode('', lots)).toBeUndefined();
+  });
+
+  it('ne résout jamais un code vide, même sur un lot sans numéro', () => {
+    // Un scan qui ne rend rien (étiquette illisible) ne doit pas « trouver » le lot dont l'API
+    // aurait renvoyé un numéro vide : ce serait le mauvais lot, décompté pour de vrai.
+    const abimes = [batch({ lot_number: '' })];
+
+    expect(findBatchByCode('   ', abimes)).toBeUndefined();
+  });
+});
+
+describe('isUsableBatch', () => {
+  it('accepte un lot en stock', () => {
+    expect(isUsableBatch(batch({ statut: 'EN_STOCK' }))).toBe(true);
+  });
+
+  it('refuse un lot en quarantaine', () => {
+    // C'est la garde sanitaire : un lot bloqué (non-conformité, excursion froid) ne doit
+    // JAMAIS entrer en transformation. Le serveur le refusera, mais l'opérateur doit le
+    // savoir devant sa cuve, pas dix minutes plus tard.
+    expect(isUsableBatch(batch({ statut: 'BLOQUE' }))).toBe(false);
+    expect(isUsableBatch(batch({ statut: 'ALERTE' }))).toBe(false);
+  });
+
+  it('refuse un lot déjà expédié ou épuisé', () => {
+    expect(isUsableBatch(batch({ statut: 'EXPEDIE' }))).toBe(false);
+    expect(isUsableBatch(batch({ statut: 'EPUISE' }))).toBe(false);
+  });
+
+  it('refuse un lot déjà engagé en production', () => {
+    // Il est physiquement dans une autre cuve : le reprendre ferait sortir deux fois la même
+    // matière du stock.
+    expect(isUsableBatch(batch({ statut: 'EN_PRODUCTION' }))).toBe(false);
+  });
+
+  it('bloque quelle que soit la casse du statut', () => {
+    // Les statuts ne sont pas un enum Prisma : c'est une chaîne. Un « bloque » minuscule venu
+    // d'un import ne doit pas ouvrir la porte à un lot en quarantaine.
+    expect(isUsableBatch(batch({ statut: 'bloque' }))).toBe(false);
+  });
+
+  it('refuse un lot périmé', () => {
+    // Une DLC dépassée est un motif de blocage sanitaire, pas une alerte cosmétique.
+    const hier = new Date(Date.now() - 86_400_000).toISOString();
+
+    expect(isUsableBatch(batch({ date_peremption: hier }))).toBe(false);
+  });
+
+  it('accepte un lot dont la date de péremption est encore devant', () => {
+    const demain = new Date(Date.now() + 86_400_000).toISOString();
+
+    expect(isUsableBatch(batch({ date_peremption: demain }))).toBe(true);
+  });
+});
 
 describe('loadBatch', () => {
   it('mappe la fiche lot (produit inclus, Decimal → number)', async () => {

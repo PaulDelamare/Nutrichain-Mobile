@@ -3,18 +3,20 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useEffect, useRef } from 'react';
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-interface LocationScannerProps {
+interface CodeScannerProps {
   visible: boolean;
+  title: string;
+  hint: string;
   onClose: () => void;
   onScan: (code: string) => void;
 }
 
 /**
- * Scanner l'emplacement, plutôt que le choisir dans une liste : les deux scans (le lot puis
- * le frigo) sont physiques et sur place, donc l'opérateur ne peut pas déclarer un emplacement
- * où il n'est pas. Un menu déroulant se remplit depuis le bureau.
+ * Scanner, plutôt que choisir dans une liste : un scan est physique et sur place, donc
+ * l'opérateur ne peut pas déclarer ce qu'il n'a pas devant lui — ce qu'un menu déroulant,
+ * remplissable depuis le bureau, permettrait. Sert au frigo, à la cuve et aux lots.
  */
-export function LocationScanner({ visible, onClose, onScan }: LocationScannerProps) {
+export function CodeScanner({ visible, title, hint, onClose, onScan }: CodeScannerProps) {
   const [permission, requestPermission] = useCameraPermissions();
 
   // La caméra émet depuis le processeur natif de frames, sans attendre React : sans verrou
@@ -43,7 +45,7 @@ export function LocationScanner({ visible, onClose, onScan }: LocationScannerPro
           <TouchableOpacity onPress={onClose} hitSlop={12}>
             <Ionicons name="close" size={26} color="#fff" />
           </TouchableOpacity>
-          <Text style={styles.title}>Scanner l&apos;emplacement</Text>
+          <Text style={styles.title}>{title}</Text>
           <View style={styles.spacer} />
         </View>
 
@@ -54,14 +56,12 @@ export function LocationScanner({ visible, onClose, onScan }: LocationScannerPro
               facing="back"
               onBarcodeScanned={({ data }) => handleBarcode(data)}
             />
-            <Text style={styles.hint}>
-              Placez l&apos;étiquette du frigo, de la cuve ou de l&apos;étagère dans le cadre.
-            </Text>
+            <Text style={styles.hint}>{hint}</Text>
           </>
         ) : (
           <View style={styles.permission}>
             <Ionicons name="camera-outline" size={44} color="rgba(255,255,255,0.5)" />
-            <Text style={styles.hint}>La caméra est nécessaire pour scanner l&apos;emplacement.</Text>
+            <Text style={styles.hint}>La caméra est nécessaire pour scanner.</Text>
             <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>
               <Text style={styles.permissionBtnText}>Autoriser l&apos;accès</Text>
             </TouchableOpacity>

@@ -42,6 +42,14 @@ export function toApiError(error: AxiosError): ApiError {
   return new ApiError(data?.message ?? error.message, status);
 }
 
+/**
+ * Aucune réponse reçue : l'opération a pu être commitée quand même. Sur une écriture, il ne faut
+ * SURTOUT pas annoncer un échec — l'opérateur la resaisirait et la compterait deux fois.
+ */
+export function isNetworkError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === NETWORK_ERROR_STATUS;
+}
+
 /** Traduit une erreur technique en message affichable par un opérateur terrain. */
 export function getErrorMessage(error: unknown): string {
   if (!(error instanceof ApiError)) {
