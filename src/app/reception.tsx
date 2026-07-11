@@ -25,11 +25,12 @@ import {
   loadEquipment,
   type Equipment,
 } from '@/lib/equipment';
-import { getErrorMessage } from '@/lib/errors';
 import { enqueueReceipt } from '@/lib/sync/queue';
 import { SHIPMENT_ID_MAX_LENGTH, buildReceipt } from '@/lib/sync/receipt';
 import { syncPendingOperations } from '@/lib/sync/sync';
 import type { ReceiptPayload } from '@/lib/sync/types';
+import { BRAND, HEADER_GRADIENT } from '@/lib/theme';
+import { toastError } from '@/lib/toast';
 
 const CONTROL_STATUSES: ReceiptPayload['statut_controle'][] = [
   'OK',
@@ -72,7 +73,7 @@ export default function ReceptionScreen() {
         setProducts(loadedProducts);
       })
       .catch((error: unknown) => {
-        Toast.show({ type: 'error', text1: 'Catalogue indisponible', text2: getErrorMessage(error) });
+        toastError('Catalogue indisponible', error);
       })
       .finally(() => setLoading(false));
 
@@ -135,7 +136,7 @@ export default function ReceptionScreen() {
       // Tentative opportuniste : si le réseau est là, l'opération part immédiatement.
       syncPendingOperations().catch(() => undefined);
     } catch (error: unknown) {
-      Toast.show({ type: 'error', text1: 'Enregistrement impossible', text2: getErrorMessage(error) });
+      toastError('Enregistrement impossible', error);
     } finally {
       setSaving(false);
     }
@@ -144,7 +145,7 @@ export default function ReceptionScreen() {
   return (
     <View style={styles.screen}>
       <LinearGradient
-        colors={['#0F766E', '#0D9488']}
+        colors={HEADER_GRADIENT}
         style={[styles.header, { paddingTop: insets.top + 12 }]}
       >
         <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
@@ -154,7 +155,7 @@ export default function ReceptionScreen() {
       </LinearGradient>
 
       {loading ? (
-        <ActivityIndicator style={styles.loader} size="large" color="#0D9488" />
+        <ActivityIndicator style={styles.loader} size="large" color={BRAND.primary} />
       ) : (
         <KeyboardAvoidingView
           style={styles.flex}
@@ -225,7 +226,7 @@ export default function ReceptionScreen() {
                   onPress={() => setScanningLocation(true)}
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="location" size={18} color="#0D9488" />
+                  <Ionicons name="location" size={18} color={BRAND.primary} />
                   <View style={styles.locationText}>
                     <Text style={styles.locationName}>{location.nom}</Text>
                     <Text style={styles.locationPlace}>{location.lieu.nom}</Text>
@@ -238,7 +239,7 @@ export default function ReceptionScreen() {
                   onPress={() => setScanningLocation(true)}
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="qr-code-outline" size={18} color="#0D9488" />
+                  <Ionicons name="qr-code-outline" size={18} color={BRAND.primary} />
                   <Text style={styles.scanLocationText}>Scanner l&apos;emplacement</Text>
                 </TouchableOpacity>
               )}
@@ -303,7 +304,7 @@ const styles = StyleSheet.create({
     color: '#111827',
   },
   submit: {
-    backgroundColor: '#0D9488',
+    backgroundColor: BRAND.primary,
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
@@ -316,12 +317,12 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#0D9488',
+    borderColor: BRAND.primary,
     borderStyle: 'dashed',
     borderRadius: 10,
     paddingVertical: 14,
   },
-  scanLocationText: { fontSize: 14, fontWeight: '600', color: '#0D9488' },
+  scanLocationText: { fontSize: 14, fontWeight: '600', color: BRAND.primary },
   location: {
     flexDirection: 'row',
     alignItems: 'center',

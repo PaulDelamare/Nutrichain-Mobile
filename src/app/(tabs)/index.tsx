@@ -19,6 +19,8 @@ import { formatRole } from '@/lib/roles';
 import { countByStatus } from '@/lib/sync/queue';
 import type { OperationStatus } from '@/lib/sync/types';
 
+import { BRAND, HEADER_GRADIENT } from '@/lib/theme';
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 interface StatCardProps {
@@ -83,7 +85,7 @@ export default function HomeScreen() {
     <View style={styles.screen}>
       {/* ── Header gradient ─────────────────────────────────────── */}
       <LinearGradient
-        colors={['#0F766E', '#0D9488']}
+        colors={HEADER_GRADIENT}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={[styles.header, { paddingTop: insets.top + 16 }]}
@@ -132,7 +134,7 @@ export default function HomeScreen() {
           activeOpacity={0.85}
         >
           <View style={styles.scanIconContainer}>
-            <Ionicons name="qr-code" size={36} color="#0D9488" />
+            <Ionicons name="qr-code" size={36} color={BRAND.primary} />
           </View>
           <Text style={styles.scanTitle}>Scanner un lot</Text>
           <Text style={styles.scanSubtitle}>GTIN, SSCC, datamatrix — lecture rapide</Text>

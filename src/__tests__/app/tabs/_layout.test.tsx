@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react-native';
 
 import { useAuthStatus, type AuthStatus } from '@/hooks/use-auth-status';
 
-import TabsLayout from './_layout';
+import TabsLayout from '@/app/(tabs)/_layout';
 
 jest.mock('@/hooks/use-auth-status');
 jest.mock('expo-router', () => {

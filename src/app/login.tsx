@@ -21,7 +21,8 @@ import {
 import Toast from 'react-native-toast-message';
 
 import { signIn } from '@/lib/api';
-import { getErrorMessage } from '@/lib/errors';
+import { BRAND, BRAND_GRADIENT } from '@/lib/theme';
+import { toastError } from '@/lib/toast';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -34,9 +35,12 @@ export default function LoginScreen() {
 
   const passwordRef = useRef<TextInput>(null);
 
-  const [fontsLoaded] = useFonts({ Rajdhani_400Regular, Rajdhani_700Bold });
+  const [fontsLoaded, fontError] = useFonts({ Rajdhani_400Regular, Rajdhani_700Bold });
 
-  if (!fontsLoaded) return null;
+  // Une police n'est qu'un habillage : elle ne doit jamais empêcher de se connecter. L'erreur
+  // de `useFonts` était ignorée, donc une police introuvable laissait l'écran VIDE À VIE —
+  // application morte, sans message, et sans diagnostic possible sur le terrain.
+  if (!fontsLoaded && !fontError) return null;
 
   const isEmailValid = email.length > 0 && EMAIL_REGEX.test(email);
   const isFormValid = isEmailValid && password.length > 0;
@@ -55,12 +59,8 @@ export default function LoginScreen() {
       });
       router.replace('/(tabs)');
     } catch (err) {
-      Toast.show({
-        type: 'error',
-        text1: 'Erreur de connexion',
-        text2: getErrorMessage(err),
-        visibilityTime: 4000,
-      });
+      // `visibilityTime: 4000` retiré : c'est déjà le défaut de la librairie.
+      toastError('Erreur de connexion', err);
     } finally {
       setLoading(false);
     }
@@ -68,7 +68,7 @@ export default function LoginScreen() {
 
   return (
     <LinearGradient
-      colors={['#0F3D36', '#1A5C52', '#0D9488']}
+      colors={['#0F3D36', '#1A5C52', BRAND.primary]}
       locations={[0, 0.45, 1]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
@@ -160,7 +160,7 @@ export default function LoginScreen() {
               style={styles.buttonWrapper}
             >
               <LinearGradient
-                colors={['#14B8A6', '#0D9488']}
+                colors={BRAND_GRADIENT}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 0, y: 1 }}
                 style={[styles.button, (!isFormValid || loading) && styles.buttonDisabled]}

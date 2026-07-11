@@ -5,7 +5,7 @@ import { countByStatus, deleteOperation, listOperations, requeueOperation } from
 import { syncPendingOperations } from '@/lib/sync/sync';
 import type { OperationStatus, QueuedOperation } from '@/lib/sync/types';
 
-import SyncScreen from './sync';
+import SyncScreen from '@/app/(tabs)/sync';
 
 jest.mock('@/lib/sync/queue');
 jest.mock('@/lib/sync/sync');

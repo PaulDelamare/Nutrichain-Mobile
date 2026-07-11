@@ -4,6 +4,8 @@ import { ActivityIndicator, Platform, StyleSheet, View, type ColorValue } from '
 
 import { useAuthStatus } from '@/hooks/use-auth-status';
 
+import { BRAND } from '@/lib/theme';
+
 type IconName = React.ComponentProps<typeof Ionicons>['name'];
 
 function tabIcon(active: IconName, inactive: IconName) {
@@ -21,7 +23,7 @@ export default function TabsLayout() {
   if (status === 'loading') {
     return (
       <View style={styles.loader}>
-        <ActivityIndicator size="large" color="#0D9488" />
+        <ActivityIndicator size="large" color={BRAND.primary} />
       </View>
     );
   }
@@ -34,7 +36,7 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#0D9488',
+        tabBarActiveTintColor: BRAND.primary,
         tabBarInactiveTintColor: '#9CA3AF',
         tabBarStyle: {
           backgroundColor: '#ffffff',

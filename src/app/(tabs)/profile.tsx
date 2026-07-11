@@ -7,6 +7,8 @@ import { useCurrentUser } from '@/hooks/use-current-user';
 import { signOut } from '@/lib/api';
 import { formatRole } from '@/lib/roles';
 
+import { BRAND } from '@/lib/theme';
+
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { user, loading } = useCurrentUser();
@@ -19,11 +21,11 @@ export default function ProfileScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.avatar}>
-        <Ionicons name="person" size={40} color="#0D9488" />
+        <Ionicons name="person" size={40} color={BRAND.primary} />
       </View>
 
       {loading ? (
-        <ActivityIndicator color="#0D9488" />
+        <ActivityIndicator color={BRAND.primary} />
       ) : (
         <>
           <Text style={styles.name}>{user?.name ?? 'Utilisateur'}</Text>

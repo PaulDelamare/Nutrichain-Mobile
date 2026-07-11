@@ -1,5 +1,7 @@
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import { BRAND } from '@/lib/theme';
+
 interface Option {
   value: string;
   label: string;
@@ -56,7 +58,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
   },
-  chipSelected: { backgroundColor: '#0D9488', borderColor: '#0D9488' },
+  chipSelected: { backgroundColor: BRAND.primary, borderColor: BRAND.primary },
   chipText: { fontSize: 14, color: '#374151', fontWeight: '500' },
   chipTextSelected: { color: '#fff', fontWeight: '700' },
 });
