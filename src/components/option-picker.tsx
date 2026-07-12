@@ -1,4 +1,4 @@
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { BRAND } from '@/lib/theme';
 
@@ -14,7 +14,13 @@ interface OptionPickerProps {
   onSelect: (value: string) => void;
 }
 
-/** Puces tactiles plutôt qu'un menu déroulant : sélectionnable avec des gants, sans viser. */
+/**
+ * Puces tactiles plutôt qu'un menu déroulant : sélectionnable avec des gants, sans viser.
+ *
+ * Elles reviennent à la ligne au lieu de défiler horizontalement. Le défilement tranchait la
+ * dernière option en deux au bord de l'écran, sans rien indiquer : l'opérateur croyait la liste
+ * finie et choisissait le mauvais fournisseur — parmi ceux qu'il pouvait voir.
+ */
 export function OptionPicker({ label, options, selected, onSelect }: OptionPickerProps) {
   return (
     <View style={styles.field}>
@@ -23,7 +29,7 @@ export function OptionPicker({ label, options, selected, onSelect }: OptionPicke
       {options.length === 0 ? (
         <Text style={styles.empty}>Aucune option disponible</Text>
       ) : (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
+        <View style={styles.row}>
           {options.map((option) => {
             const isSelected = option.value === selected;
             return (
@@ -39,7 +45,7 @@ export function OptionPicker({ label, options, selected, onSelect }: OptionPicke
               </TouchableOpacity>
             );
           })}
-        </ScrollView>
+        </View>
       )}
     </View>
   );
@@ -49,8 +55,11 @@ const styles = StyleSheet.create({
   field: { gap: 8 },
   label: { fontSize: 13, fontWeight: '600', color: '#374151' },
   empty: { fontSize: 13, color: '#9CA3AF', fontStyle: 'italic' },
-  row: { gap: 8, paddingRight: 8 },
+  row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
+    // Une puce ne dépasse jamais la largeur de l'écran : un nom de client à rallonge (« E2E-Customer-…»)
+    // pousserait sinon toute la ligne hors du cadre.
+    flexShrink: 1,
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 10,
