@@ -43,6 +43,13 @@ export interface QueuedOperation {
   attempts: number;
   /** Motif du blocage, tel que renvoyé par le serveur : sans lui, l'opérateur doit deviner. */
   error: string | null;
+  /**
+   * Epoch ms de mise en file (colonne `created_at`). Surfacé pour afficher l'âge d'un scan :
+   * une opération PENDING de plus de 7 jours voit sa clé d'idempotence expirer côté serveur.
+   * Toujours renseigné par `listOperations` / `getPendingOperations` ; optionnel pour ne pas
+   * alourdir les littéraux de test qui ne s'en soucient pas.
+   */
+  createdAt?: number;
 }
 
 /** Un item de la réponse 207 de POST /api/sync/scans. */

@@ -16,6 +16,7 @@ interface OperationRow {
   status: OperationStatus;
   attempts: number;
   error: string | null;
+  created_at: number;
 }
 
 function toOperation(row: OperationRow): QueuedOperation {
@@ -26,6 +27,7 @@ function toOperation(row: OperationRow): QueuedOperation {
     status: row.status,
     attempts: row.attempts,
     error: row.error,
+    createdAt: row.created_at,
   };
 }
 
@@ -127,7 +129,7 @@ export async function flagStalePending(timestamp: number, message: string): Prom
 export async function getPendingOperations(now: number, limit: number): Promise<QueuedOperation[]> {
   const db = await getDatabase();
   const rows = await db.getAllAsync<OperationRow>(
-    `SELECT client_op_id, type, payload, status, attempts, error
+    `SELECT client_op_id, type, payload, status, attempts, error, created_at
        FROM operations
       WHERE status = 'PENDING' AND next_attempt_at <= ?
       ORDER BY created_at ASC
@@ -197,14 +199,14 @@ const HISTORY_LIMIT = 50;
 export async function listOperations(): Promise<QueuedOperation[]> {
   const db = await getDatabase();
   const rows = await db.getAllAsync<OperationRow>(
-    `SELECT client_op_id, type, payload, status, attempts, error
+    `SELECT client_op_id, type, payload, status, attempts, error, created_at
        FROM operations
       WHERE status IN ${BLOCKED_STATUSES_SQL}
       ORDER BY created_at DESC`
   );
 
   const history = await db.getAllAsync<OperationRow>(
-    `SELECT client_op_id, type, payload, status, attempts, error
+    `SELECT client_op_id, type, payload, status, attempts, error, created_at
        FROM operations
       WHERE status NOT IN ${BLOCKED_STATUSES_SQL}
       ORDER BY created_at DESC

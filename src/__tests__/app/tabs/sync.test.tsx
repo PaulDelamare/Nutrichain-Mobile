@@ -9,6 +9,7 @@ import SyncScreen from '@/app/(tabs)/sync';
 
 jest.mock('@/lib/sync/queue');
 jest.mock('@/lib/sync/sync');
+jest.mock('@/hooks/use-online-status', () => ({ useOnlineStatus: () => true }));
 jest.mock('expo-router', () => ({ useFocusEffect: (effect: () => void) => effect() }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
 
