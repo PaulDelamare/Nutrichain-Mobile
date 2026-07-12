@@ -13,7 +13,9 @@ let mockBottomInset = 0;
 
 jest.mock('@/hooks/use-auth-status');
 jest.mock('expo-router', () => {
-  // Requis dans la factory : jest.mock est hissé avant les imports du module.
+  // Requis dans la factory : jest.mock est hissé avant les imports du module, donc un import
+  // classique ne serait pas encore évalué ici. C'est la seule forme qui fonctionne.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { Text } = require('react-native');
   return {
     Tabs: Object.assign(
