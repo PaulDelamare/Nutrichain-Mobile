@@ -23,8 +23,11 @@ jest.mock('expo-router', () => ({ router: { back: jest.fn() } }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
 
 jest.mock('@/components/code-scanner', () => {
+  // Requis dans la factory : jest.mock est hissé avant les imports du module.
+  /* eslint-disable @typescript-eslint/no-require-imports */
   const React = require('react');
   const { Text, TouchableOpacity } = require('react-native');
+  /* eslint-enable @typescript-eslint/no-require-imports */
 
   return {
     CodeScanner: ({ visible, onScan }: { visible: boolean; onScan: (code: string) => void }) =>

@@ -25,8 +25,11 @@ jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({
 
 // Le scanner réel ouvre la caméra : on le réduit à ce qu'il apporte à l'écran, un code scanné.
 jest.mock('@/components/code-scanner', () => {
+  // Requis dans la factory : jest.mock est hissé avant les imports du module.
+  /* eslint-disable @typescript-eslint/no-require-imports */
   const React = require('react');
   const { Text, TouchableOpacity } = require('react-native');
+  /* eslint-enable @typescript-eslint/no-require-imports */
 
   return {
     CodeScanner: ({ visible, onScan }: { visible: boolean; onScan: (code: string) => void }) =>
