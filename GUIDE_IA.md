@@ -17,13 +17,13 @@ qui manque toujours, c'est la facture.
 - **Tests obligatoires** : unitaires + intégration. Le parcours critique a un test de bout en bout.
 - **Commits conventionnels**, une PR = un sujet, et **la PR n'est ouverte que quand elle est prête à
   merger**.
-- **Très peu de commentaires** : uniquement le *pourquoi* non évident, jamais le *quoi*.
+- **Très peu de commentaires** : uniquement le _pourquoi_ non évident, jamais le _quoi_.
 - **Pas de suringénierie** : la solution la plus simple qui marche. Aucune abstraction anticipée.
 - **Tu ne supprimes jamais un fichier non suivi par git sans demander.**
 - **Tu restes dans ton périmètre.** Si deux IA travaillent sur le projet, elles ne partagent **jamais
   le même répertoire de travail** — un `git worktree` chacune, ou deux dépôts.
-  *Ça nous a coûté : deux instances dans le même répertoire, l'une passe en `detached HEAD`, le
-  travail non commité de l'autre disparaît.*
+  _Ça nous a coûté : deux instances dans le même répertoire, l'une passe en `detached HEAD`, le
+  travail non commité de l'autre disparaît._
 - **Tu finis toujours par un résumé court** : ce qui est fait, ce qui reste, ce dont tu n'es pas sûr.
 
 ---
@@ -92,11 +92,11 @@ produit pas. Si tu dois beaucoup mocker pour que ça passe, tu testes ton mock, 
 
 ## Les niveaux de test, et ce que chacun prouve
 
-| Niveau | Ce qu'il prouve | Ce qu'il ne prouve pas |
-|---|---|---|
-| **Unitaire** | Une fonction fait ce qu'elle dit, y compris aux bords : vide, zéro, négatif, trop long, mauvaise casse | Que les pièces s'assemblent |
-| **Intégration** | Le vrai moteur (vraie base, vraies requêtes, vraies validations) accepte et rejette ce qu'il faut | Qu'un humain peut s'en servir |
-| **Bout en bout** | Le parcours critique marche du premier clic à la ligne en base | Rien d'autre — c'est lent, garde-le pour le cœur |
+| Niveau           | Ce qu'il prouve                                                                                        | Ce qu'il ne prouve pas                           |
+| ---------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| **Unitaire**     | Une fonction fait ce qu'elle dit, y compris aux bords : vide, zéro, négatif, trop long, mauvaise casse | Que les pièces s'assemblent                      |
+| **Intégration**  | Le vrai moteur (vraie base, vraies requêtes, vraies validations) accepte et rejette ce qu'il faut      | Qu'un humain peut s'en servir                    |
+| **Bout en bout** | Le parcours critique marche du premier clic à la ligne en base                                         | Rien d'autre — c'est lent, garde-le pour le cœur |
 
 **Et un quatrième garde-fou, non négociable : le build.**
 
@@ -126,7 +126,7 @@ tests ne rattrapent pas.**
 - **Nomme en métier, pas en technique** : `isUsableBatch()`, pas `checkStatus()`. Le nom doit survivre
   au refactor.
 - **Les commentaires disent POURQUOI, jamais QUOI.** `// incrémente i` est du bruit. `// le serveur
-  exige 2 décimales : une balance qui affiche 12,345 fait rejeter tout l'envoi` est une information
+exige 2 décimales : une balance qui affiche 12,345 fait rejeter tout l'envoi` est une information
   qu'aucun lecteur ne peut deviner.
 - **YAGNI.** Pas de pattern pour deux cas, pas d'abstraction « au cas où ». Tu as une pente naturelle
   à produire des couches : résiste. La bonne solution est celle qu'on peut supprimer facilement.
@@ -158,14 +158,14 @@ tests ne rattrapent pas.**
 ## Sécurité : par défaut, pas à la fin
 
 - **Le cloisonnement se vérifie sur CHAQUE objet d'une requête**, même le plus anodin.
-  *Ici, la transformation vérifiait l'organisation du produit et des lots parents… mais pas celle de
+  _Ici, la transformation vérifiait l'organisation du produit et des lots parents… mais pas celle de
   la cuve. Un produit fini pouvait être rattaché au frigo d'une autre entreprise — et échapper
-  définitivement à la mise en quarantaine automatique.*
+  définitivement à la mise en quarantaine automatique._
 - **L'identité vient de la session, jamais du corps de la requête.** Si le client peut envoyer
   `author_id`, alors c'est le client qui choisit qui signe.
 - **Teste avec le rôle le plus faible, pas avec l'admin.**
-  *Ici, le jeu de données de démo connecte un `owner`, qui a tous les droits : il **masque tous les
-  403**. On croyait le cloisonnement des rôles solide — on ne l'avait jamais exercé.*
+  _Ici, le jeu de données de démo connecte un `owner`, qui a tous les droits : il **masque tous les
+  403**. On croyait le cloisonnement des rôles solide — on ne l'avait jamais exercé._
 - **Ce qui compile ne prouve rien sur la sécurité.**
 
 ---
