@@ -16,9 +16,19 @@ function tabIcon(active: IconName, inactive: IconName) {
   return TabIcon;
 }
 
+/** Icône + libellé d'un onglet, hors marges. */
+const TAB_CONTENT_HEIGHT = 52;
+const TAB_PADDING_TOP = 8;
+
 export default function TabsLayout() {
   const status = useAuthStatus();
   const insets = useSafeAreaInsets();
+
+  // La marge basse doit être RÉSERVÉE dans la hauteur, pas prélevée dessus. La hauteur
+  // n'ajoutait que `insets.bottom` alors que le padding valait `max(insets.bottom, 8)` :
+  // dès que l'inset système descend sous 8 px (téléphone sans barre de navigation, web),
+  // les 8 px manquants étaient pris sur la zone de contenu et coupaient les libellés.
+  const bottomInset = Math.max(insets.bottom, 8);
 
   // Sans cette garde, un lien profond ouvre les onglets sans session : les écrans
   // s'afficheraient vides et chaque appel API partirait en 401.
@@ -44,12 +54,12 @@ export default function TabsLayout() {
           backgroundColor: '#ffffff',
           borderTopColor: '#F3F4F6',
           borderTopWidth: 1,
-          // Ajoute l'inset système du bas (barre de navigation Android / home indicator iOS)
-          // à la hauteur ET au padding. Sans ça, en edge-to-edge (défaut Expo SDK 56) la barre
-          // système recouvre les onglets et les rend intouchables.
-          height: 60 + insets.bottom,
-          paddingBottom: Math.max(insets.bottom, 8),
-          paddingTop: 8,
+          // L'inset système du bas (barre de navigation Android / home indicator iOS) s'ajoute
+          // à la hauteur ET au padding : sans ça, en edge-to-edge (défaut Expo SDK 56), la
+          // barre système recouvre les onglets et les rend intouchables.
+          height: TAB_CONTENT_HEIGHT + TAB_PADDING_TOP + bottomInset,
+          paddingBottom: bottomInset,
+          paddingTop: TAB_PADDING_TOP,
         },
         tabBarLabelStyle: {
           fontSize: 11,

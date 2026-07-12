@@ -13,7 +13,9 @@ let mockBottomInset = 0;
 
 jest.mock('@/hooks/use-auth-status');
 jest.mock('expo-router', () => {
-  // Requis dans la factory : jest.mock est hissé avant les imports du module.
+  // Requis dans la factory : jest.mock est hissé avant les imports du module, donc un import
+  // classique ne serait pas encore évalué ici. C'est la seule forme qui fonctionne.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { Text } = require('react-native');
   return {
     Tabs: Object.assign(
@@ -74,5 +76,34 @@ describe('garde du groupe (tabs)', () => {
     const tabBarStyle = mockTabsProps.screenOptions?.tabBarStyle;
     expect(tabBarStyle?.height).toBe(60 + 48);
     expect(tabBarStyle?.paddingBottom).toBe(48);
+  });
+
+  it('garde la même place aux libellés quand il n’y a pas de barre système', () => {
+    // Le padding minimum de 8 px était PRÉLEVÉ sur la hauteur au lieu d'y être ajouté :
+    // sur un téléphone sans barre de navigation (et sur le web), la zone de contenu tombait
+    // à 44 px et les libellés « Accueil / Scan / Sync / Profil » étaient coupés.
+    mockBottomInset = 0;
+    renderWithStatus('authenticated');
+
+    const tabBarStyle = mockTabsProps.screenOptions?.tabBarStyle;
+    const contenu =
+      (tabBarStyle?.height ?? 0) -
+      (tabBarStyle?.paddingTop ?? 0) -
+      (tabBarStyle?.paddingBottom ?? 0);
+
+    expect(contenu).toBe(52);
+  });
+
+  it('laisse la même place aux libellés quel que soit l’inset', () => {
+    // La hauteur suit le padding : la place de l'icône et du libellé ne doit JAMAIS dépendre
+    // de la taille de la barre système.
+    const contenus = [0, 8, 34, 48].map((inset) => {
+      mockBottomInset = inset;
+      renderWithStatus('authenticated');
+      const style = mockTabsProps.screenOptions?.tabBarStyle;
+      return (style?.height ?? 0) - (style?.paddingTop ?? 0) - (style?.paddingBottom ?? 0);
+    });
+
+    expect(contenus).toEqual([52, 52, 52, 52]);
   });
 });

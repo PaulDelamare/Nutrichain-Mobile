@@ -14,6 +14,8 @@ jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({
 
 // La caméra est native : on capture le callback qu'elle recevrait pour le déclencher à la main.
 jest.mock('expo-camera', () => {
+  // Requis dans la factory : jest.mock est hissé avant les imports du module.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { Text: RNText } = require('react-native');
   return {
     useCameraPermissions: () => [{ granted: true }, jest.fn()],
