@@ -1,7 +1,7 @@
 import { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from 'axios';
 
 import { apiClient } from '../api';
-import { getUserId } from '../session';
+import { getToken, getUserId } from '../session';
 import { getPendingOperations, saveOperationUpdates } from './queue';
 import { MAX_BATCH_SIZE, syncPendingOperations } from './sync';
 import type { QueuedOperation } from './types';
@@ -20,6 +20,7 @@ jest.mock('expo-router', () => ({ router: { replace: jest.fn() } }));
 
 const queue = jest.mocked({ getPendingOperations, saveOperationUpdates });
 const mockedGetUserId = jest.mocked(getUserId);
+const mockedGetToken = jest.mocked(getToken);
 
 function operation(clientOpId: string, attempts = 0): QueuedOperation {
   return {
@@ -71,6 +72,7 @@ describe('syncPendingOperations', () => {
     jest.clearAllMocks();
     queue.saveOperationUpdates.mockResolvedValue(undefined);
     mockedGetUserId.mockResolvedValue('operateur-A');
+    mockedGetToken.mockResolvedValue('jwt-123');
   });
 
   it('ne lit même pas la file quand aucun opérateur n’est identifié', async () => {
@@ -85,19 +87,21 @@ describe('syncPendingOperations', () => {
     expect(queue.getPendingOperations).not.toHaveBeenCalled();
   });
 
-  it('envoie les scans avec le jeton ÉPINGLÉ de leur propriétaire', async () => {
+  it('envoie les scans avec le jeton ÉPINGLÉ de leur propriétaire, pas avec le jeton courant', async () => {
     // L'identité est vérifiée, mais c'est le JETON qui autorise l'écriture côté serveur. Les lire
     // séparément (l'un à la lecture de la file, l'autre à l'émission) laisse une fenêtre où les
-    // scans de A partent avec le jeton de B. Ici, la valeur vérifiée et la valeur envoyée sont
-    // la même.
-    queue.getPendingOperations
-      .mockResolvedValueOnce([operation('op-1')])
-      .mockResolvedValue([]);
+    // scans de A partent avec le jeton de B.
+    //
+    // Le jeton CHANGE ici entre l'épinglage et l'émission : c'est la seule façon de prouver que
+    // celui qui part est bien l'épinglé. Avec un jeton constant, le test passerait aussi bien sans
+    // aucun épinglage — il ne prouverait rien.
+    mockedGetToken.mockResolvedValueOnce('jeton-de-A').mockResolvedValue('jeton-de-B');
+    queue.getPendingOperations.mockResolvedValueOnce([operation('op-1')]).mockResolvedValue([]);
     const request = respondWith(207, multiStatus([{ clientOpId: 'op-1', status: 'ok' }]));
 
     await syncPendingOperations();
 
-    expect(request.headers().Authorization).toBe('Bearer jwt-123');
+    expect(request.headers().Authorization).toBe('Bearer jeton-de-A');
   });
 
   it('abandonne un envoi en vol si l’opérateur change', async () => {

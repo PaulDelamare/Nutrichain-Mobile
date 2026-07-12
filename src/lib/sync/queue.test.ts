@@ -12,6 +12,7 @@
 import { migrate, ORPHAN_OPERATION_MESSAGE, SCHEMA } from '../db';
 import {
   countByStatus,
+  countForeignPending,
   deleteOperation,
   enqueueReceipt,
   flagStalePending,
@@ -332,6 +333,78 @@ describeWithSqlite('la file appartient à l’opérateur, pas au téléphone', (
     mockUserId = null;
 
     await expect(deleteOperation(scan)).rejects.toThrow(/opérateur/i);
+  });
+});
+
+describeWithSqlite('dire la vérité sur les scans qu’on ne montre pas', () => {
+  beforeEach(() => {
+    engine = new DatabaseSync(':memory:');
+    engine.exec(SCHEMA);
+    mockUserId = 'operateur-A';
+  });
+
+  it('annonce les scans d’un autre opérateur restés sur le téléphone', async () => {
+    // Sans ce compteur, l'écran affirme « Tout est synchronisé » alors que des réceptions dorment
+    // en base : l'application dit le contraire de la vérité.
+    await enqueueReceipt(PAYLOAD);
+    await enqueueReceipt(PAYLOAD);
+
+    mockUserId = 'operateur-B';
+
+    await expect(countForeignPending()).resolves.toBe(2);
+  });
+
+  it('ne compte pas les siens', async () => {
+    await enqueueReceipt(PAYLOAD);
+
+    await expect(countForeignPending()).resolves.toBe(0);
+  });
+
+  it('ne compte pas ce qui est déjà parti', async () => {
+    const envoye = await enqueueReceipt(PAYLOAD);
+    markAs(envoye, 'SYNCED');
+
+    mockUserId = 'operateur-B';
+
+    await expect(countForeignPending()).resolves.toBe(0);
+  });
+
+  it('ne compte pas les orphelins : ils sont visibles, eux', async () => {
+    // Ils apparaissent dans la liste de celui qui se connecte — les compter en plus les
+    // annoncerait deux fois.
+    engine
+      .prepare(
+        `INSERT INTO operations (client_op_id, user_id, type, payload, status, created_at)
+         VALUES ('orphelin', '', 'receipt', ?, 'CONFLICT', ?)`
+      )
+      .run(JSON.stringify(PAYLOAD), NOW);
+
+    await expect(countForeignPending()).resolves.toBe(0);
+  });
+
+  it('signale un scan sans auteur, pour que l’écran lui refuse le renvoi', async () => {
+    // Le drapeau porte une règle de sécurité, pas un détail d'affichage : sans lui, l'écran
+    // proposerait « Renvoyer » sur un scan que la file refuse — et laisserait croire qu'on peut
+    // signer la réception d'un autre.
+    engine
+      .prepare(
+        `INSERT INTO operations (client_op_id, user_id, type, payload, status, created_at)
+         VALUES ('orphelin', '', 'receipt', ?, 'CONFLICT', ?)`
+      )
+      .run(JSON.stringify(PAYLOAD), NOW);
+
+    const [scan] = await listOperations();
+
+    expect(scan.orphan).toBe(true);
+  });
+
+  it('ne marque PAS orphelin un scan qui a un auteur', async () => {
+    const scan = await enqueueReceipt(PAYLOAD);
+    markAs(scan, 'REJECTED');
+
+    const [liste] = await listOperations();
+
+    expect(liste.orphan).toBe(false);
   });
 });
 

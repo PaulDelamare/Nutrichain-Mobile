@@ -233,6 +233,21 @@ describe('intercepteur de réponse', () => {
     expect(session.clearUserId).toHaveBeenCalled();
   });
 
+  it('n’éjecte pas l’opérateur suivant à cause d’un 401 tardif du précédent', async () => {
+    // Une requête partie avant une déconnexion peut revenir en 401 longtemps après. Sans garde,
+    // elle détruit la session de celui qui vient de se connecter — en pleine saisie, pour une
+    // session qui n'était même pas la sienne.
+    session.getToken.mockResolvedValue('jeton-du-suivant');
+    respondWith(401, { message: 'Unauthorized' });
+
+    await expect(
+      apiClient.get('/api/whatever', { headers: { Authorization: 'Bearer jeton-du-precedent' } })
+    ).rejects.toThrow(ApiError);
+
+    expect(session.clearToken).not.toHaveBeenCalled();
+    expect(mockedRouter.replace).not.toHaveBeenCalled();
+  });
+
   it('ne détruit PAS le catalogue sur un 401', async () => {
     // Un rafraîchissement de fond qui prend un 401 effacerait, sinon, les fournisseurs et produits
     // dont l'écran de réception a besoin — en pleine saisie, et sans réseau pour les recharger.

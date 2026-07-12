@@ -48,7 +48,19 @@ apiClient.interceptors.response.use(
     // Un 401 « api_key » accuse la configuration de l'app, pas la session : purger le jeton
     // ici détruirait une session parfaitement valide, sans espoir de retour.
     if (apiError.status === 401 && apiError.field !== 'api_key') {
-      const hadSession = (await getToken()) !== null;
+      const currentToken = await getToken();
+      const rejectedToken = error.config?.headers?.Authorization;
+
+      // Le refus ne concerne que le porteur du jeton refusé. Une requête partie AVANT une
+      // déconnexion peut revenir en 401 longtemps après : sans cette comparaison, elle éjecterait
+      // vers l'écran de connexion l'opérateur SUIVANT, en pleine saisie — pour une session qui
+      // n'était même pas la sienne.
+      const concernsCurrentSession =
+        currentToken !== null && rejectedToken === `Bearer ${currentToken}`;
+
+      if (!concernsCurrentSession) {
+        throw apiError;
+      }
 
       // Une session expirée efface TOUTE l'identité, pas seulement le jeton : le laisser derrière
       // ferait repartir l'opérateur suivant avec l'identité du précédent — la falsification qu'on
@@ -62,9 +74,7 @@ apiClient.interceptors.response.use(
 
       // Sans cette redirection, la session expirée laisse l'utilisateur sur des écrans
       // vides : la garde de navigation ne se réévalue qu'au montage.
-      if (hadSession) {
-        router.replace('/login');
-      }
+      router.replace('/login');
     }
 
     throw apiError;
