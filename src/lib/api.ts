@@ -8,6 +8,9 @@ import { clearToken, clearUserId, getToken, getUserId, saveToken, saveUserId } f
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000';
 const API_KEY = process.env.EXPO_PUBLIC_API_KEY ?? '';
 
+// `create` sur l'export par défaut d'axios, et non l'export nommé du même nom : c'est l'usage
+// documenté, et le seul qui construise une instance isolée. La règle ne sait pas les distinguer.
+// eslint-disable-next-line import/no-named-as-default-member
 export const apiClient = axios.create({
   baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' },
