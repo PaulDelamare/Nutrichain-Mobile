@@ -1,6 +1,7 @@
 import * as Crypto from 'expo-crypto';
 
 import { getDatabase } from '../db';
+import { getUserId } from '../session';
 import {
   BLOCKED_STATUSES,
   type OperationStatus,
@@ -11,6 +12,7 @@ import {
 
 interface OperationRow {
   client_op_id: string;
+  user_id: string;
   type: 'receipt';
   payload: string;
   status: OperationStatus;
@@ -28,21 +30,53 @@ function toOperation(row: OperationRow): QueuedOperation {
     attempts: row.attempts,
     error: row.error,
     createdAt: row.created_at,
+    orphan: row.user_id === '',
   };
 }
 
-const INSERT_OPERATION = `INSERT INTO operations (client_op_id, type, payload, status, created_at)
-   VALUES (?, ?, ?, 'PENDING', ?)`;
+const INSERT_OPERATION = `INSERT INTO operations (client_op_id, user_id, type, payload, status, created_at)
+   VALUES (?, ?, ?, ?, 'PENDING', ?)`;
+
+const SELECT_COLUMNS = 'client_op_id, user_id, type, payload, status, attempts, error, created_at';
 
 /** Fragment SQL dérivé de la source unique : plus de liste de statuts recopiée à la main. */
 const BLOCKED_STATUSES_SQL = `(${BLOCKED_STATUSES.map((status) => `'${status}'`).join(', ')})`;
 
+/**
+ * Un scan appartient à l'OPÉRATEUR qui l'a saisi, pas au téléphone.
+ *
+ * Le poste de terrain est partagé : A saisit cinq réceptions hors réseau, se déconnecte, B se
+ * connecte. Sans propriétaire, la file de A repartait avec le jeton de B — et l'API gravait les
+ * réceptions de A au nom de B, en base ET dans la chaîne d'audit. C'est la falsification d'identité
+ * que tout le reste du système s'échine à empêcher, réintroduite par le mobile.
+ *
+ * L'identité est donc lue ICI, dans la file elle-même, et non passée en paramètre par les écrans :
+ * un paramètre s'oublie sur un site d'appel, et l'oublier, c'est rouvrir la faille.
+ */
+async function requireOwner(): Promise<string> {
+  const userId = await getUserId();
+
+  if (!userId) {
+    throw new Error("Aucun opérateur identifié : impossible d'enregistrer un scan.");
+  }
+
+  return userId;
+}
+
 /** L'identifiant est généré ici, une fois pour toutes : c'est la clé d'idempotence de l'API. */
 export async function enqueueReceipt(payload: ReceiptPayload): Promise<string> {
   const db = await getDatabase();
+  const userId = await requireOwner();
   const clientOpId = Crypto.randomUUID();
 
-  await db.runAsync(INSERT_OPERATION, clientOpId, 'receipt', JSON.stringify(payload), Date.now());
+  await db.runAsync(
+    INSERT_OPERATION,
+    clientOpId,
+    userId,
+    'receipt',
+    JSON.stringify(payload),
+    Date.now()
+  );
 
   return clientOpId;
 }
@@ -57,9 +91,16 @@ export async function enqueueReceipt(payload: ReceiptPayload): Promise<string> {
  */
 export async function deleteOperation(clientOpId: string): Promise<void> {
   const db = await getDatabase();
+  const userId = await requireOwner();
+  // Un scan orphelin (`user_id` vide) est supprimable par qui le voit : il est bloqué, donc jamais
+  // envoyé, et personne d'autre ne viendra le réclamer. En revanche le scan d'un AUTRE opérateur
+  // identifié ne se supprime pas — ce n'est pas à lui d'en décider.
   const result = await db.runAsync(
-    `DELETE FROM operations WHERE client_op_id = ? AND status IN ${BLOCKED_STATUSES_SQL}`,
-    clientOpId
+    `DELETE FROM operations
+      WHERE client_op_id = ? AND (user_id = ? OR user_id = '')
+        AND status IN ${BLOCKED_STATUSES_SQL}`,
+    clientOpId,
+    userId
   );
 
   if (result.changes === 0) {
@@ -78,23 +119,38 @@ export async function deleteOperation(clientOpId: string): Promise<void> {
  * Atomique : sans transaction, une application tuée entre l'insertion et la suppression
  * laisserait la copie ET l'originale, et l'opérateur — voyant son scan toujours bloqué —
  * le renverrait une seconde fois. Deux réceptions pour une seule palette.
+ *
+ * On ne renvoie QUE ses propres scans. Un scan orphelin (saisi avant que la file ait un
+ * propriétaire) n'est pas renvoyable : le renvoyer le grave dans la chaîne d'audit au nom de celui
+ * qui appuie — c'est-à-dire lui faire signer une réception qu'il n'a pas faite. Exactement la
+ * falsification qu'on corrige, avec une case à cocher. Il se lit, et il se jette.
  */
 export async function requeueOperation(clientOpId: string): Promise<string> {
   const db = await getDatabase();
+  const userId = await requireOwner();
   const newClientOpId = Crypto.randomUUID();
 
   await db.withExclusiveTransactionAsync(async (tx) => {
     const row = await tx.getFirstAsync<{ payload: string; type: string }>(
       `SELECT payload, type FROM operations
-        WHERE client_op_id = ? AND status IN ${BLOCKED_STATUSES_SQL}`,
-      clientOpId
+        WHERE client_op_id = ? AND user_id = ?
+          AND status IN ${BLOCKED_STATUSES_SQL}`,
+      clientOpId,
+      userId
     );
 
     if (!row) {
       throw new Error(`Aucune opération bloquée à renvoyer : ${clientOpId}`);
     }
 
-    await tx.runAsync(INSERT_OPERATION, newClientOpId, row.type, row.payload, Date.now());
+    await tx.runAsync(
+      INSERT_OPERATION,
+      newClientOpId,
+      userId,
+      row.type,
+      row.payload,
+      Date.now()
+    );
     await tx.runAsync('DELETE FROM operations WHERE client_op_id = ?', clientOpId);
   });
 
@@ -126,14 +182,22 @@ export async function flagStalePending(timestamp: number, message: string): Prom
   );
 }
 
+/** N'envoie QUE les scans de l'opérateur connecté : ceux d'un autre partiraient sous son identité. */
 export async function getPendingOperations(now: number, limit: number): Promise<QueuedOperation[]> {
   const db = await getDatabase();
+  const userId = await getUserId();
+
+  if (!userId) {
+    return [];
+  }
+
   const rows = await db.getAllAsync<OperationRow>(
-    `SELECT client_op_id, type, payload, status, attempts, error, created_at
+    `SELECT ${SELECT_COLUMNS}
        FROM operations
-      WHERE status = 'PENDING' AND next_attempt_at <= ?
+      WHERE status = 'PENDING' AND user_id = ? AND next_attempt_at <= ?
       ORDER BY created_at ASC
       LIMIT ?`,
+    userId,
     now,
     limit
   );
@@ -165,11 +229,10 @@ export async function saveOperationUpdates(updates: OperationUpdate[]): Promise<
   });
 }
 
+/** Les compteurs de l'accueil ne parlent que de l'opérateur connecté : ce sont SES scans. */
 export async function countByStatus(): Promise<Record<OperationStatus, number>> {
   const db = await getDatabase();
-  const rows = await db.getAllAsync<{ status: OperationStatus; total: number }>(
-    'SELECT status, COUNT(*) AS total FROM operations GROUP BY status'
-  );
+  const userId = await getUserId();
 
   const counts: Record<OperationStatus, number> = {
     PENDING: 0,
@@ -178,11 +241,44 @@ export async function countByStatus(): Promise<Record<OperationStatus, number>> 
     REJECTED: 0,
   };
 
+  if (!userId) {
+    return counts;
+  }
+
+  const rows = await db.getAllAsync<{ status: OperationStatus; total: number }>(
+    'SELECT status, COUNT(*) AS total FROM operations WHERE user_id = ? GROUP BY status',
+    userId
+  );
+
   for (const row of rows) {
     counts[row.status] = row.total;
   }
 
   return counts;
+}
+
+/**
+ * Combien de scans d'un AUTRE opérateur attendent encore dans ce téléphone.
+ *
+ * Sans ce compteur, l'écran affiche « Tout est synchronisé » alors que cinq réceptions dorment en
+ * base : l'app affirme le contraire de la vérité. On ne montre RIEN de leur contenu — ni auteur,
+ * ni lot : juste qu'ils existent, et que leur auteur doit se connecter pour les envoyer.
+ */
+export async function countForeignPending(): Promise<number> {
+  const db = await getDatabase();
+  const userId = await getUserId();
+
+  if (!userId) {
+    return 0;
+  }
+
+  const row = await db.getFirstAsync<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM operations
+      WHERE user_id <> ? AND user_id <> '' AND status <> 'SYNCED'`,
+    userId
+  );
+
+  return row?.total ?? 0;
 }
 
 /** L'historique est borné pour ne pas charger des milliers de lignes ; les scans bloqués, eux, ne le sont pas. */
@@ -195,24 +291,36 @@ const HISTORY_LIMIT = 50;
  * opération signalée périmée a plus de 7 jours), donc reléguées hors des 50 dernières dès
  * qu'un poste scanne quelques dizaines de palettes par jour. L'accueil annonçait « 3 à
  * corriger » et l'écran n'en montrait aucune — le scan restait bloqué à jamais.
+ *
+ * Les scans orphelins (`user_id` vide, saisis avant que la file ait un propriétaire) sont montrés
+ * à qui se connecte : ils sont bloqués, donc jamais envoyés, et il faut bien que quelqu'un puisse
+ * les reprendre ou les jeter. Les cacher les condamnerait à rester en base pour toujours.
  */
 export async function listOperations(): Promise<QueuedOperation[]> {
   const db = await getDatabase();
-  const rows = await db.getAllAsync<OperationRow>(
-    `SELECT client_op_id, type, payload, status, attempts, error, created_at
+  const userId = await getUserId();
+
+  if (!userId) {
+    return [];
+  }
+
+  const blocked = await db.getAllAsync<OperationRow>(
+    `SELECT ${SELECT_COLUMNS}
        FROM operations
-      WHERE status IN ${BLOCKED_STATUSES_SQL}
-      ORDER BY created_at DESC`
+      WHERE status IN ${BLOCKED_STATUSES_SQL} AND (user_id = ? OR user_id = '')
+      ORDER BY created_at DESC`,
+    userId
   );
 
   const history = await db.getAllAsync<OperationRow>(
-    `SELECT client_op_id, type, payload, status, attempts, error, created_at
+    `SELECT ${SELECT_COLUMNS}
        FROM operations
-      WHERE status NOT IN ${BLOCKED_STATUSES_SQL}
+      WHERE status NOT IN ${BLOCKED_STATUSES_SQL} AND user_id = ?
       ORDER BY created_at DESC
       LIMIT ?`,
+    userId,
     HISTORY_LIMIT
   );
 
-  return [...rows, ...history].map(toOperation);
+  return [...blocked, ...history].map(toOperation);
 }

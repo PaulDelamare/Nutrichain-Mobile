@@ -15,7 +15,13 @@ import Toast from 'react-native-toast-message';
 
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { toastError } from '@/lib/toast';
-import { countByStatus, deleteOperation, listOperations, requeueOperation } from '@/lib/sync/queue';
+import {
+  countByStatus,
+  countForeignPending,
+  deleteOperation,
+  listOperations,
+  requeueOperation,
+} from '@/lib/sync/queue';
 import { formatRelativeFr, syncedPercent } from '@/lib/sync/summary';
 import { syncPendingOperations } from '@/lib/sync/sync';
 import { isBlocked, type OperationStatus, type QueuedOperation } from '@/lib/sync/types';
@@ -50,10 +56,17 @@ export default function SyncScreen() {
   const inFlight = useRef(new Set<string>());
   const [busy, setBusy] = useState<string[]>([]);
 
+  const [foreign, setForeign] = useState(0);
+
   const refresh = useCallback(async () => {
-    const [nextCounts, list] = await Promise.all([countByStatus(), listOperations()]);
+    const [nextCounts, list, nextForeign] = await Promise.all([
+      countByStatus(),
+      listOperations(),
+      countForeignPending(),
+    ]);
     setCounts(nextCounts);
     setOperations(list);
+    setForeign(nextForeign);
     setNow(Date.now());
   }, []);
 
@@ -184,6 +197,17 @@ export default function SyncScreen() {
               </View>
             </View>
 
+            {/* Sans cette ligne, l'écran affirme « tout est synchronisé » alors que des réceptions
+                d'un autre opérateur dorment en base — l'app dirait le contraire de la vérité. On
+                ne montre rien de leur contenu : seulement qu'elles existent, et qui peut les
+                envoyer. */}
+            {foreign > 0 && (
+              <Text style={styles.foreign}>
+                {foreign} scan{foreign > 1 ? 's' : ''} d&apos;un autre opérateur {foreign > 1 ? 'attendent' : 'attend'}{' '}
+                sur ce téléphone : lui seul peut {foreign > 1 ? 'les' : 'l’'}envoyer, en se connectant.
+              </Text>
+            )}
+
             <Text style={styles.sectionLabel}>ÉVÉNEMENTS (EPCIS)</Text>
           </>
         }
@@ -217,15 +241,21 @@ export default function SyncScreen() {
 
               {blocked && (
                 <View style={styles.actions}>
-                  <TouchableOpacity
-                    style={[styles.action, isBusy && styles.actionDisabled]}
-                    onPress={() => confirmRequeue(item)}
-                    disabled={isBusy}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="refresh-outline" size={15} color={BRAND.primary} />
-                    <Text style={styles.actionText}>Renvoyer</Text>
-                  </TouchableOpacity>
+                  {/* Un scan orphelin ne se renvoie pas : le renvoyer le graverait dans la chaîne
+                      d'audit au nom de celui qui appuie. Proposer le bouton serait promettre une
+                      action que la file refuse — et laisser croire qu'on peut signer pour un
+                      autre. Il reste supprimable, une fois lu. */}
+                  {!item.orphan && (
+                    <TouchableOpacity
+                      style={[styles.action, isBusy && styles.actionDisabled]}
+                      onPress={() => confirmRequeue(item)}
+                      disabled={isBusy}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="refresh-outline" size={15} color={BRAND.primary} />
+                      <Text style={styles.actionText}>Renvoyer</Text>
+                    </TouchableOpacity>
+                  )}
 
                   <TouchableOpacity
                     style={[styles.action, isBusy && styles.actionDisabled]}
@@ -310,6 +340,15 @@ const styles = StyleSheet.create({
   },
   list: { paddingTop: 4, paddingBottom: 20 },
   empty: { textAlign: 'center', color: '#9CA3AF', marginTop: 24 },
+  foreign: {
+    backgroundColor: '#FEF3C7',
+    color: '#92400E',
+    fontSize: 12,
+    lineHeight: 17,
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 12,
+  },
   row: {
     backgroundColor: '#fff',
     borderRadius: 12,

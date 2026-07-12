@@ -1,11 +1,15 @@
 import { apiClient } from '../api';
 import { ApiError } from '../errors';
+import { getToken, getUserId } from '../session';
 import { rejectOutcome, resolveOutcome } from './outcome';
 import { getPendingOperations, saveOperationUpdates } from './queue';
 import type { OperationUpdate, QueuedOperation, SyncItemResult } from './types';
 
 /** L'API refuse au-delà de 100 items (garde anti-DoS et SLA de latence). */
 export const MAX_BATCH_SIZE = 100;
+
+/** Garde-fou de terminaison : 100 lots de 100 scans, largement au-delà d'une journée de terrain. */
+const MAX_ROUNDS = 100;
 
 /** Deux envois simultanés du même lot doubleraient le trafic sans rien gagner. */
 let running = false;
@@ -32,10 +36,42 @@ function summarize(updates: OperationUpdate[]): SyncSummary {
   };
 }
 
-async function postBatch(operations: QueuedOperation[]): Promise<SyncItemResult[]> {
-  const { data } = await apiClient.post<SyncResponse>('/api/sync/scans', {
-    items: operations.map(({ clientOpId, type, payload }) => ({ clientOpId, type, payload })),
-  });
+/**
+ * L'opérateur a changé entre la lecture de la file et l'émission. On abandonne le lot : le rejouer
+ * sous le jeton du nouveau venu graverait les scans de l'ancien à son nom.
+ */
+class OwnerChanged extends Error {}
+
+/** L'opérateur épinglé pour toute la durée d'une synchronisation : son identité ET son jeton. */
+interface Owner {
+  userId: string;
+  token: string;
+}
+
+/**
+ * L'identité est ré-assertée juste avant chaque requête, et le jeton est posé EXPLICITEMENT.
+ *
+ * Sinon la file est lue avec l'identité de l'opérateur, tandis que le jeton est attaché par
+ * l'intercepteur au moment de l'émission : deux lectures distinctes de la session, jamais
+ * réconciliées. Entre elles, une déconnexion suivie d'une connexion suffisait à faire partir les
+ * scans de A avec le jeton de B — et un lot refusé en 400 est redécoupé en plusieurs requêtes
+ * successives, ce qui élargissait la fenêtre à plusieurs secondes.
+ *
+ * En posant le jeton nous-mêmes, la valeur vérifiée et la valeur envoyée sont la MÊME.
+ */
+async function postBatch(
+  operations: QueuedOperation[],
+  owner: Owner
+): Promise<SyncItemResult[]> {
+  if ((await getUserId()) !== owner.userId) {
+    throw new OwnerChanged();
+  }
+
+  const { data } = await apiClient.post<SyncResponse>(
+    '/api/sync/scans',
+    { items: operations.map(({ clientOpId, type, payload }) => ({ clientOpId, type, payload })) },
+    { headers: { Authorization: `Bearer ${owner.token}` } }
+  );
 
   return data.data.results;
 }
@@ -50,12 +86,22 @@ function add(total: SyncSummary, batch: SyncSummary): SyncSummary {
   };
 }
 
-async function syncBatch(operations: QueuedOperation[], now: number): Promise<SyncSummary> {
+async function syncBatch(
+  operations: QueuedOperation[],
+  now: number,
+  owner: Owner
+): Promise<SyncSummary> {
   let results: SyncItemResult[];
 
   try {
-    results = await postBatch(operations);
+    results = await postBatch(operations, owner);
   } catch (error) {
+    // Plus personne, ou quelqu'un d'autre : on ne touche à rien. Les scans restent en attente,
+    // propriété de leur auteur, et repartiront quand il se reconnectera.
+    if (error instanceof OwnerChanged) {
+      return summarize([]);
+    }
+
     // La validation du serveur est fail-fast sur le lot entier : un seul item malformé
     // le fait refuser en bloc (400), sans réponse 207. Le réessayer indéfiniment gèlerait
     // la file pour toujours — on scinde donc le lot jusqu'à isoler le coupable, ce qui
@@ -68,8 +114,8 @@ async function syncBatch(operations: QueuedOperation[], now: number): Promise<Sy
       }
 
       const middle = Math.floor(operations.length / 2);
-      const first = await syncBatch(operations.slice(0, middle), now);
-      const second = await syncBatch(operations.slice(middle), now);
+      const first = await syncBatch(operations.slice(0, middle), now, owner);
+      const second = await syncBatch(operations.slice(middle), now, owner);
       return add(first, second);
     }
 
@@ -104,9 +150,25 @@ export async function syncPendingOperations(): Promise<SyncSummary> {
   try {
     let total = summarize([]);
 
+    // L'opérateur est épinglé pour toute la durée de la synchronisation : c'est LUI dont les scans
+    // partent, et c'est SON jeton qui doit les porter. Sans propriétaire, il n'y a rien à envoyer.
+    const userId = await getUserId();
+    const token = await getToken();
+
+    if (!userId || !token) {
+      return total;
+    }
+
+    const owner: Owner = { userId, token };
+
     // Boucle : une file de 250 scans ne doit pas exiger trois appuis sur « Synchroniser ».
     // Les opérations replanifiées (backoff) sortent du lot suivant, ce qui borne la boucle.
-    for (;;) {
+    //
+    // Le compteur de tours n'est pas une coquetterie : la sortie de boucle repose entièrement sur
+    // le fait que chaque tour change le statut des opérations. Si une régression future le rompt,
+    // la boucle ne rougit pas — elle FIGE l'application (et la CI). Une borne, et le pire cas
+    // devient une synchronisation incomplète, pas un gel.
+    for (let round = 0; round < MAX_ROUNDS; round++) {
       const now = Date.now();
       const operations = await getPendingOperations(now, MAX_BATCH_SIZE);
 
@@ -114,7 +176,7 @@ export async function syncPendingOperations(): Promise<SyncSummary> {
         return total;
       }
 
-      const batch = await syncBatch(operations, now);
+      const batch = await syncBatch(operations, now, owner);
       total = add(total, batch);
 
       // Rien n'est passé : réseau coupé ou serveur en vrac. Insister martèlerait l'API.
@@ -122,6 +184,8 @@ export async function syncPendingOperations(): Promise<SyncSummary> {
         return total;
       }
     }
+
+    return total;
   } finally {
     running = false;
   }

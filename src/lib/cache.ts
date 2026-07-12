@@ -10,6 +10,16 @@ export async function readCache<T>(key: string): Promise<T | null> {
   return row ? (JSON.parse(row.value) as T) : null;
 }
 
+/**
+ * Le catalogue est celui de l'organisation de l'opérateur connecté. Le laisser en place après une
+ * déconnexion le montrerait, hors réseau, à l'opérateur suivant — qui n'est pas forcément de la
+ * même organisation. Aucune perte : il se recharge à la première connexion.
+ */
+export async function clearCache(): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync('DELETE FROM cache');
+}
+
 export async function writeCache(key: string, value: unknown): Promise<void> {
   const db = await getDatabase();
   await db.runAsync(

@@ -9,7 +9,7 @@
  * paramètres `status` et `attempts` — qui ferait qu'AUCUN scan n'est jamais marqué
  * synchronisé, et que tous repartiraient indéfiniment — passait au vert.
  */
-import { SCHEMA } from '../db';
+import { migrate, ORPHAN_OPERATION_MESSAGE, SCHEMA } from '../db';
 import {
   countByStatus,
   deleteOperation,
@@ -48,8 +48,16 @@ jest.mock('expo-crypto', () => ({
   randomUUID: () => require('crypto').randomUUID(),
 }));
 
+/** L'opérateur connecté, piloté par le test : c'est lui qui possède les scans qu'il saisit. */
+let mockUserId: string | null = 'operateur-A';
+
+jest.mock('../session', () => ({
+  getUserId: async () => mockUserId,
+}));
+
 /** L'API d'expo-sqlite utilisée par la file, portée sur node:sqlite. */
 const mockDatabase = {
+  execAsync: async (sql: string) => engine.exec(sql),
   runAsync: async (sql: string, ...params: unknown[]) => engine.prepare(sql).run(...params),
   getAllAsync: async (sql: string, ...params: unknown[]) => engine.prepare(sql).all(...params),
   getFirstAsync: async (sql: string, ...params: unknown[]) =>
@@ -87,6 +95,7 @@ describeWithSqlite('file d’opérations (moteur SQLite réel)', () => {
   beforeEach(() => {
     engine = new DatabaseSync(':memory:');
     engine.exec(SCHEMA);
+    mockUserId = 'operateur-A';
   });
 
   it('attribue un identifiant unique à chaque réception', async () => {
@@ -214,5 +223,233 @@ describeWithSqlite('file d’opérations (moteur SQLite réel)', () => {
 
     expect(listed[0].clientOpId).toBe(bloquee);
     expect(listed.filter((operation) => operation.status === 'REJECTED')).toHaveLength(1);
+  });
+});
+
+describeWithSqlite('la file appartient à l’opérateur, pas au téléphone', () => {
+  beforeEach(() => {
+    engine = new DatabaseSync(':memory:');
+    engine.exec(SCHEMA);
+    mockUserId = 'operateur-A';
+  });
+
+  it('n’envoie JAMAIS les scans d’un autre opérateur', async () => {
+    // LE bug : poste de terrain partagé. A saisit cinq réceptions hors réseau, se déconnecte,
+    // B se connecte. Sans propriétaire, la file de A repartait avec le jeton de B — et l'API
+    // gravait les réceptions de A au nom de B, en base ET dans la chaîne d'audit WORM.
+    await enqueueReceipt(PAYLOAD);
+    await enqueueReceipt(PAYLOAD);
+
+    mockUserId = 'operateur-B';
+
+    await expect(getPendingOperations(NOW, 100)).resolves.toHaveLength(0);
+  });
+
+  it('rend ses scans à leur auteur dès qu’il se reconnecte', async () => {
+    // Le corollaire indispensable : on ne détruit rien. Une réception saisie hors réseau est une
+    // donnée terrain que personne ne peut ressaisir — elle attend son auteur.
+    await enqueueReceipt(PAYLOAD);
+
+    mockUserId = 'operateur-B';
+    expect(await getPendingOperations(NOW, 100)).toHaveLength(0);
+
+    mockUserId = 'operateur-A';
+    expect(await getPendingOperations(NOW, 100)).toHaveLength(1);
+  });
+
+  it('ne montre à un opérateur ni les compteurs ni l’historique d’un autre', async () => {
+    await enqueueReceipt(PAYLOAD);
+
+    mockUserId = 'operateur-B';
+
+    await expect(countByStatus()).resolves.toMatchObject({ PENDING: 0 });
+    await expect(listOperations()).resolves.toHaveLength(0);
+  });
+
+  it('refuse d’enregistrer un scan quand personne n’est identifié', async () => {
+    // Un scan anonyme ne pourrait jamais être attribué : mieux vaut refuser la saisie que
+    // fabriquer une opération que personne n'assumera.
+    mockUserId = null;
+
+    await expect(enqueueReceipt(PAYLOAD)).rejects.toThrow(/opérateur/i);
+  });
+
+  it('n’envoie rien tant que personne n’est identifié', async () => {
+    await enqueueReceipt(PAYLOAD);
+    mockUserId = null;
+
+    await expect(getPendingOperations(NOW, 100)).resolves.toHaveLength(0);
+  });
+
+  it('interdit de supprimer le scan bloqué d’un autre opérateur', async () => {
+    const scanDeA = await enqueueReceipt(PAYLOAD);
+    markAs(scanDeA, 'REJECTED');
+
+    mockUserId = 'operateur-B';
+
+    await expect(deleteOperation(scanDeA)).rejects.toThrow();
+    expect(engine.prepare('SELECT COUNT(*) AS n FROM operations').get().n).toBe(1);
+  });
+
+  it('rattache un scan renvoyé à celui qui le renvoie', async () => {
+    // C'est lui qui en répond désormais : le serveur scellera SON identité dans l'audit.
+    const bloque = await enqueueReceipt(PAYLOAD);
+    markAs(bloque, 'CONFLICT');
+
+    const renvoye = await requeueOperation(bloque);
+
+    const row = engine
+      .prepare('SELECT user_id FROM operations WHERE client_op_id = ?')
+      .get(renvoye);
+    expect(row.user_id).toBe('operateur-A');
+  });
+
+  it('interdit de RENVOYER le scan bloqué d’un autre opérateur', async () => {
+    // La garde la plus sensible de la file : renvoyer, c'est réinscrire le scan sous SON identité.
+    // Laisser B renvoyer un scan de A, c'est lui faire signer une réception qu'il n'a pas faite —
+    // la falsification d'origine, avec une case à cocher.
+    const scanDeA = await enqueueReceipt(PAYLOAD);
+    markAs(scanDeA, 'CONFLICT');
+
+    mockUserId = 'operateur-B';
+
+    await expect(requeueOperation(scanDeA)).rejects.toThrow();
+  });
+
+  it('ne montre pas non plus les scans BLOQUÉS d’un autre opérateur', async () => {
+    const scanDeA = await enqueueReceipt(PAYLOAD);
+    markAs(scanDeA, 'REJECTED');
+
+    mockUserId = 'operateur-B';
+
+    await expect(listOperations()).resolves.toHaveLength(0);
+  });
+
+  it('refuse toute suppression quand personne n’est identifié', async () => {
+    const scan = await enqueueReceipt(PAYLOAD);
+    markAs(scan, 'REJECTED');
+
+    mockUserId = null;
+
+    await expect(deleteOperation(scan)).rejects.toThrow(/opérateur/i);
+  });
+});
+
+describeWithSqlite('scans orphelins (saisis avant que la file ait un propriétaire)', () => {
+  beforeEach(() => {
+    engine = new DatabaseSync(':memory:');
+    engine.exec(SCHEMA);
+    mockUserId = 'operateur-A';
+  });
+
+  /** Ce que la migration produit : une ligne sans auteur, bloquée, jamais envoyée. */
+  function seedOrphan(status: OperationStatus = 'CONFLICT'): string {
+    const id = 'orphelin-1';
+    engine
+      .prepare(
+        `INSERT INTO operations (client_op_id, user_id, type, payload, status, created_at)
+         VALUES (?, '', 'receipt', ?, ?, ?)`
+      )
+      .run(id, JSON.stringify(PAYLOAD), status, NOW);
+    return id;
+  }
+
+  it('ne les envoie jamais : leur auteur est inconnu', async () => {
+    seedOrphan('PENDING');
+
+    await expect(getPendingOperations(NOW, 100)).resolves.toHaveLength(0);
+  });
+
+  it('les montre quand même : les cacher les condamnerait à rester en base pour toujours', async () => {
+    seedOrphan();
+
+    await expect(listOperations()).resolves.toHaveLength(1);
+  });
+
+  it('interdit de se les attribuer : ce serait signer la réception d’un autre', async () => {
+    // Les renvoyer les graverait dans la chaîne d'audit au nom de celui qui appuie. Leur auteur
+    // est inconnu, personne ne peut en répondre — on ne les remet pas en circulation.
+    const orphelin = seedOrphan();
+
+    await expect(requeueOperation(orphelin)).rejects.toThrow();
+  });
+
+  it('laisse l’opérateur les jeter, une fois qu’il les a lus', async () => {
+    // Sans cette issue, ils resteraient en base pour toujours, invisibles et inertes.
+    const orphelin = seedOrphan();
+
+    await deleteOperation(orphelin);
+
+    expect(engine.prepare('SELECT COUNT(*) AS n FROM operations').get().n).toBe(0);
+  });
+});
+
+describeWithSqlite('migration d’une file sans propriétaire', () => {
+  /** Le schéma d'AVANT : aucune colonne `user_id`. C'est la base réelle des téléphones déjà déployés. */
+  const ANCIEN_SCHEMA = `
+    CREATE TABLE operations (
+      client_op_id    TEXT PRIMARY KEY NOT NULL,
+      type            TEXT NOT NULL,
+      payload         TEXT NOT NULL,
+      status          TEXT NOT NULL,
+      attempts        INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at INTEGER NOT NULL DEFAULT 0,
+      error           TEXT,
+      server_id       TEXT,
+      created_at      INTEGER NOT NULL
+    );
+  `;
+
+  function seedAncienScan(id: string, status: OperationStatus) {
+    engine
+      .prepare(
+        `INSERT INTO operations (client_op_id, type, payload, status, created_at)
+         VALUES (?, 'receipt', ?, ?, ?)`
+      )
+      .run(id, JSON.stringify(PAYLOAD), status, NOW);
+  }
+
+  beforeEach(() => {
+    engine = new DatabaseSync(':memory:');
+    engine.exec(ANCIEN_SCHEMA);
+    mockUserId = 'operateur-A';
+  });
+
+  it('ajoute la colonne propriétaire sans toucher aux scans déjà synchronisés', async () => {
+    seedAncienScan('deja-sync', 'SYNCED');
+
+    await migrate(mockDatabase);
+
+    const row = engine.prepare("SELECT status FROM operations WHERE client_op_id = 'deja-sync'").get();
+    expect(row.status).toBe('SYNCED');
+  });
+
+  it('bloque les scans en attente : leur auteur ne peut plus être établi', async () => {
+    // On ne peut ni les attribuer à qui se connecte ensuite (ce serait la falsification), ni les
+    // détruire (ce sont des données terrain). On les arrête, avec le motif.
+    seedAncienScan('sans-auteur', 'PENDING');
+
+    await migrate(mockDatabase);
+
+    const row = engine.prepare("SELECT status, error FROM operations WHERE client_op_id = 'sans-auteur'").get();
+    expect(row.status).toBe('CONFLICT');
+    expect(row.error).toBe(ORPHAN_OPERATION_MESSAGE);
+  });
+
+  it('ne repart JAMAIS sous l’identité du prochain connecté', async () => {
+    seedAncienScan('sans-auteur', 'PENDING');
+
+    await migrate(mockDatabase);
+
+    await expect(getPendingOperations(NOW, 100)).resolves.toHaveLength(0);
+  });
+
+  it('est rejouable sans rien abîmer', async () => {
+    seedAncienScan('sans-auteur', 'PENDING');
+
+    await migrate(mockDatabase);
+    await migrate(mockDatabase);
+
+    expect(engine.prepare('SELECT COUNT(*) AS n FROM operations').get().n).toBe(1);
   });
 });

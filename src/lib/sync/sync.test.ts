@@ -1,19 +1,25 @@
 import { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from 'axios';
 
 import { apiClient } from '../api';
+import { getUserId } from '../session';
 import { getPendingOperations, saveOperationUpdates } from './queue';
 import { MAX_BATCH_SIZE, syncPendingOperations } from './sync';
 import type { QueuedOperation } from './types';
 
 jest.mock('./queue');
+jest.mock('../cache');
 jest.mock('../session', () => ({
   getToken: jest.fn().mockResolvedValue('jwt-123'),
   clearToken: jest.fn(),
   saveToken: jest.fn(),
+  getUserId: jest.fn().mockResolvedValue('operateur-A'),
+  clearUserId: jest.fn(),
+  saveUserId: jest.fn(),
 }));
 jest.mock('expo-router', () => ({ router: { replace: jest.fn() } }));
 
 const queue = jest.mocked({ getPendingOperations, saveOperationUpdates });
+const mockedGetUserId = jest.mocked(getUserId);
 
 function operation(clientOpId: string, attempts = 0): QueuedOperation {
   return {
@@ -33,7 +39,10 @@ function operation(clientOpId: string, attempts = 0): QueuedOperation {
   };
 }
 
-function respondWith(status: number, data: unknown): { body: () => { items: unknown[] } } {
+function respondWith(
+  status: number,
+  data: unknown
+): { body: () => { items: unknown[] }; headers: () => Record<string, unknown> } {
   let seen: InternalAxiosRequestConfig | undefined;
 
   apiClient.defaults.adapter = (async (config: InternalAxiosRequestConfig) => {
@@ -47,7 +56,10 @@ function respondWith(status: number, data: unknown): { body: () => { items: unkn
     return response;
   }) as AxiosAdapter;
 
-  return { body: () => JSON.parse(String(seen?.data)) };
+  return {
+    body: () => JSON.parse(String(seen?.data)),
+    headers: () => (seen?.headers ?? {}) as Record<string, unknown>,
+  };
 }
 
 function multiStatus(results: unknown[]): unknown {
@@ -58,6 +70,51 @@ describe('syncPendingOperations', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     queue.saveOperationUpdates.mockResolvedValue(undefined);
+    mockedGetUserId.mockResolvedValue('operateur-A');
+  });
+
+  it('ne lit même pas la file quand aucun opérateur n’est identifié', async () => {
+    // Sans propriétaire, il n'y a personne dont les scans partent — et personne pour en répondre.
+    mockedGetUserId.mockResolvedValue(null);
+    queue.getPendingOperations.mockResolvedValue([operation('op-1')]);
+    respondWith(207, multiStatus([{ clientOpId: 'op-1', status: 'ok' }]));
+
+    const summary = await syncPendingOperations();
+
+    expect(summary.sent).toBe(0);
+    expect(queue.getPendingOperations).not.toHaveBeenCalled();
+  });
+
+  it('envoie les scans avec le jeton ÉPINGLÉ de leur propriétaire', async () => {
+    // L'identité est vérifiée, mais c'est le JETON qui autorise l'écriture côté serveur. Les lire
+    // séparément (l'un à la lecture de la file, l'autre à l'émission) laisse une fenêtre où les
+    // scans de A partent avec le jeton de B. Ici, la valeur vérifiée et la valeur envoyée sont
+    // la même.
+    queue.getPendingOperations
+      .mockResolvedValueOnce([operation('op-1')])
+      .mockResolvedValue([]);
+    const request = respondWith(207, multiStatus([{ clientOpId: 'op-1', status: 'ok' }]));
+
+    await syncPendingOperations();
+
+    expect(request.headers().Authorization).toBe('Bearer jwt-123');
+  });
+
+  it('abandonne un envoi en vol si l’opérateur change', async () => {
+    // La file est lue avec l'identité de A ; le jeton, lui, est attaché au moment de l'émission.
+    // Entre les deux, A peut se déconnecter et B se connecter — les scans de A partiraient alors
+    // avec le jeton de B, et l'API les graverait au nom de B dans la chaîne d'audit.
+    queue.getPendingOperations.mockResolvedValue([operation('op-1')]);
+    mockedGetUserId
+      .mockResolvedValueOnce('operateur-A') // lecture de la file
+      .mockResolvedValue('operateur-B'); // juste avant l'émission : ce n'est plus lui
+    respondWith(207, multiStatus([{ clientOpId: 'op-1', status: 'ok' }]));
+
+    const summary = await syncPendingOperations();
+
+    expect(summary.sent).toBe(0);
+    // Surtout : le scan de A n'est pas marqué synchronisé alors qu'il n'est jamais parti.
+    expect(queue.saveOperationUpdates).not.toHaveBeenCalled();
   });
 
   it('n’appelle pas l’API quand la file est vide', async () => {

@@ -50,6 +50,12 @@ export interface QueuedOperation {
    * alourdir les littéraux de test qui ne s'en soucient pas.
    */
   createdAt?: number;
+  /**
+   * Scan sans auteur connu (saisi avant que la file ait un propriétaire). Il est visible et
+   * supprimable, mais JAMAIS renvoyable : le renvoyer le graverait dans la chaîne d'audit au nom
+   * de celui qui appuie — lui faire signer une réception qu'il n'a pas faite.
+   */
+  orphan?: boolean;
 }
 
 /** Un item de la réponse 207 de POST /api/sync/scans. */
