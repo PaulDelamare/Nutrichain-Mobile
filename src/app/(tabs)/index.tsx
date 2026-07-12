@@ -163,7 +163,13 @@ export default function HomeScreen() {
         </View>
 
         {firstAlert && (
-          <View style={styles.alertBanner}>
+          <TouchableOpacity
+            style={styles.alertBanner}
+            onPress={() =>
+              router.navigate({ pathname: '/alert/[id]', params: { id: firstAlert.id } })
+            }
+            activeOpacity={0.8}
+          >
             <View style={styles.alertIconWrap}>
               <Ionicons name="warning" size={20} color="#D97706" />
             </View>
@@ -171,7 +177,8 @@ export default function HomeScreen() {
               <Text style={styles.alertTitle}>Chaîne du froid</Text>
               <Text style={styles.alertMessage}>{firstAlert.message}</Text>
             </View>
-          </View>
+            <Ionicons name="chevron-forward" size={18} color="#D97706" />
+          </TouchableOpacity>
         )}
       </ScrollView>
     </View>
