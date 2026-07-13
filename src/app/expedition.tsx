@@ -19,7 +19,13 @@ import Toast from 'react-native-toast-message';
 import { CodeScanner } from '@/components/code-scanner';
 import { OptionPicker } from '@/components/option-picker';
 import { useOnlineStatus } from '@/hooks/use-online-status';
-import { findBatchByCode, isUsableBatch, loadBatches, type Batch } from '@/lib/batches';
+import {
+  blockingReason,
+  findBatchByCode,
+  isUsableBatch,
+  loadBatches,
+  type Batch,
+} from '@/lib/batches';
 import { isNetworkError } from '@/lib/errors';
 import {
   buildShipment,
@@ -92,7 +98,7 @@ export default function ExpeditionScreen() {
     if (!isUsableBatch(batch)) {
       toastMessage(
         `Lot ${batch.lot_number} non expédiable`,
-        `Statut « ${batch.statut} » ou date de péremption dépassée.`
+        blockingReason(batch) ?? 'Ce lot ne peut pas quitter le stock.'
       );
       return;
     }

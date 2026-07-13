@@ -118,7 +118,8 @@ describe('écran de transformation', () => {
 
     expect(mockedToastMessage).toHaveBeenCalledWith(
       'Lot LOT-001 inutilisable',
-      expect.stringContaining('BLOQUE')
+      // L'opérateur lit une PHRASE, pas le code brut du statut.
+      expect.stringContaining('quarantaine')
     );
     expect(screen.queryByText('Lait cru')).toBeNull();
   });

@@ -1,4 +1,11 @@
-import { findBatchByCode, isUsableBatch, loadBatch, loadBatches, type Batch } from './batches';
+import {
+  blockingReason,
+  findBatchByCode,
+  isUsableBatch,
+  loadBatch,
+  loadBatches,
+  type Batch,
+} from './batches';
 import { readCache, writeCache } from './cache';
 import { ApiError } from './errors';
 
@@ -76,6 +83,13 @@ describe('isUsableBatch', () => {
     expect(isUsableBatch(batch({ statut: 'EN_STOCK' }))).toBe(true);
   });
 
+  it('refuse un lot qui attend son controle qualite de sortie d usine', () => {
+    // Barriere qualite : le serveur le refuse. Sans cette ligne, l'operateur scanne le lot,
+    // l'ecran l'accepte, et l'echec arrive dix minutes plus tard, a la synchronisation —
+    // exactement ce que ce garde-fou local existe pour eviter.
+    expect(isUsableBatch(batch({ statut: 'EN_ATTENTE_QC' }))).toBe(false);
+  });
+
   it('refuse un lot en quarantaine', () => {
     // C'est la garde sanitaire : un lot bloqué (non-conformité, excursion froid) ne doit
     // JAMAIS entrer en transformation. Le serveur le refusera, mais l'opérateur doit le
@@ -149,5 +163,24 @@ describe('loadBatch', () => {
     apiClient.get.mockRejectedValue(new Error('offline'));
 
     expect(await loadBatch('b1')).toBeNull();
+  });
+});
+
+describe('blockingReason', () => {
+  it('dit à l’opérateur POURQUOI le lot est bloqué, en français', () => {
+    // Il lisait le code brut du statut (« EN_ATTENTE_QC ») : ça ne lui dit ni ce qui bloque,
+    // ni qui peut le débloquer.
+    expect(blockingReason(batch({ statut: 'EN_ATTENTE_QC' }))).toContain('contrôle qualité');
+    expect(blockingReason(batch({ statut: 'BLOQUE' }))).toContain('quarantaine');
+    expect(blockingReason(batch({ statut: 'ALERTE' }))).toContain('rappel');
+  });
+
+  it('ne dit rien d’un lot parfaitement utilisable', () => {
+    expect(blockingReason(batch({ statut: 'EN_STOCK' }))).toBeNull();
+  });
+
+  it('signale une date de péremption dépassée', () => {
+    const perime = batch({ statut: 'EN_STOCK', date_peremption: '2020-01-01T00:00:00.000Z' });
+    expect(blockingReason(perime)).toContain('péremption');
   });
 });

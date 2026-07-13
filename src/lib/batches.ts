@@ -20,7 +20,43 @@ export interface Batch {
  * (quarantaine qualité, excursion de température, rappel). Le serveur la fait respecter, mais
  * l'opérateur doit le savoir devant sa cuve — pas dix minutes plus tard, à la synchronisation.
  */
-const BLOCKING_STATUSES = ['BLOQUE', 'ALERTE', 'EXPEDIE', 'EPUISE', 'EN_PRODUCTION'];
+const BLOCKING_STATUSES = [
+  'EN_ATTENTE_QC',
+  'BLOQUE',
+  'ALERTE',
+  'EXPEDIE',
+  'EPUISE',
+  'EN_PRODUCTION',
+];
+
+/**
+ * Pourquoi ce lot ne peut pas sortir, EN FRANÇAIS. L'opérateur lisait le code brut du statut
+ * (« EN_ATTENTE_QC ») : ça ne lui dit ni ce qui bloque, ni qui peut le débloquer.
+ */
+export function blockingReason(batch: Batch): string | null {
+  const statut = batch.statut.toUpperCase();
+
+  if (statut === 'EN_ATTENTE_QC') {
+    return "Ce lot attend son contrôle qualité de sortie d'usine. Le service qualité doit le libérer.";
+  }
+  if (statut === 'BLOQUE') {
+    return 'Ce lot est en quarantaine. Seule une décision qualité peut la lever.';
+  }
+  if (statut === 'ALERTE') {
+    return 'Ce lot est sous rappel produit. Il ne doit plus quitter le stock.';
+  }
+  if (statut === 'EXPEDIE' || statut === 'EPUISE') {
+    return "Ce lot a déjà quitté le stock.";
+  }
+  if (statut === 'EN_PRODUCTION') {
+    return 'Ce lot est en cours de transformation.';
+  }
+  if (batch.date_peremption && new Date(batch.date_peremption).getTime() <= Date.now()) {
+    return 'La date de péremption de ce lot est dépassée.';
+  }
+
+  return null;
+}
 
 export async function loadBatches(): Promise<Batch[]> {
   try {

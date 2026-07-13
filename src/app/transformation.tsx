@@ -18,7 +18,13 @@ import Toast from 'react-native-toast-message';
 
 import { CodeScanner } from '@/components/code-scanner';
 import { OptionPicker } from '@/components/option-picker';
-import { findBatchByCode, isUsableBatch, loadBatches, type Batch } from '@/lib/batches';
+import {
+  blockingReason,
+  findBatchByCode,
+  isUsableBatch,
+  loadBatches,
+  type Batch,
+} from '@/lib/batches';
 import { loadProducts, type Product } from '@/lib/catalog';
 import { findEquipmentByCode, loadEquipment, type Equipment } from '@/lib/equipment';
 import { isNetworkError } from '@/lib/errors';
@@ -129,7 +135,7 @@ export default function TransformationScreen() {
     if (!isUsableBatch(batch)) {
       toastMessage(
         `Lot ${batch.lot_number} inutilisable`,
-        `Statut « ${batch.statut} » ou date de péremption dépassée.`
+        blockingReason(batch) ?? 'Ce lot ne peut pas entrer en production.'
       );
       return;
     }
