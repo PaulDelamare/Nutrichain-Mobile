@@ -1,9 +1,22 @@
 import { apiClient } from '../api';
 import { ApiError } from '../errors';
 import { getToken, getUserId } from '../session';
-import { rejectOutcome, resolveOutcome } from './outcome';
+import { rejectOutcome, resolveOutcome, retryOutcome } from './outcome';
 import { getPendingOperations, saveOperationUpdates } from './queue';
 import type { OperationUpdate, QueuedOperation, SyncItemResult } from './types';
+
+/**
+ * L'API marque d'un champ `auth` tout refus qui vise l'APPELANT — rôle insuffisant, accès révoqué,
+ * session sans organisation active — par opposition aux refus qui visent le CONTENU du scan.
+ *
+ * La distinction est vitale ici : un refus de contenu se règle en isolant le scan fautif (on
+ * découpe le lot) ; un refus d'appelant frappe identiquement tout ce que cet opérateur enverra.
+ * Le découper reviendrait à condamner un à un des scans parfaitement valides.
+ */
+const CALLER_ERROR_FIELD = 'auth';
+
+/** Le rôle n'autorise pas l'écriture : c'est le seul refus d'appelant qu'un rejeu ne lèvera jamais. */
+const PERMANENT_REFUSAL_STATUS = 403;
 
 /** L'API refuse au-delà de 100 items (garde anti-DoS et SLA de latence). */
 export const MAX_BATCH_SIZE = 100;
@@ -41,6 +54,17 @@ function summarize(updates: OperationUpdate[]): SyncSummary {
  * sous le jeton du nouveau venu graverait les scans de l'ancien à son nom.
  */
 class OwnerChanged extends Error {}
+
+/**
+ * Le serveur a refusé l'opérateur lui-même. Poursuivre avec les lots suivants prendrait le même
+ * verdict, cent scans à la fois : la synchronisation entière s'arrête, en remontant le sort déjà
+ * appliqué aux opérations parties.
+ */
+class CallerRefused extends Error {
+  constructor(readonly summary: SyncSummary) {
+    super('Synchronisation refusée pour cet opérateur');
+  }
+}
 
 /** L'opérateur épinglé pour toute la durée d'une synchronisation : son identité ET son jeton. */
 interface Owner {
@@ -102,6 +126,26 @@ async function syncBatch(
       return summarize([]);
     }
 
+    // Le refus vise l'opérateur, pas ses scans. Il est donc tranché AVANT le découpage du 400 :
+    // l'API refuse une session sans organisation active avec un 400 elle aussi, et le découpage
+    // aurait rejeté définitivement, un par un, des scans terrain que personne ne peut ressaisir —
+    // pour une panne de session qu'une simple reconnexion répare.
+    //
+    // Un rôle sans droit d'écriture (403), lui, ne cédera jamais : laisser ces scans « En attente »
+    // les rendrait éternellement inertes — ni synchronisables, ni supprimables, ni remédiables —
+    // pendant que l'écran promet qu'ils partiront. REJECTED les rend enfin actionnables.
+    if (error instanceof ApiError && error.field === CALLER_ERROR_FIELD) {
+      const permanent = error.status === PERMANENT_REFUSAL_STATUS;
+      const updates = operations.map((operation) =>
+        permanent
+          ? rejectOutcome(operation, error.message)
+          : retryOutcome(operation, now, error.message)
+      );
+
+      await saveOperationUpdates(updates);
+      throw new CallerRefused(summarize(updates));
+    }
+
     // La validation du serveur est fail-fast sur le lot entier : un seul item malformé
     // le fait refuser en bloc (400), sans réponse 207. Le réessayer indéfiniment gèlerait
     // la file pour toujours — on scinde donc le lot jusqu'à isoler le coupable, ce qui
@@ -115,8 +159,21 @@ async function syncBatch(
 
       const middle = Math.floor(operations.length / 2);
       const first = await syncBatch(operations.slice(0, middle), now, owner);
-      const second = await syncBatch(operations.slice(middle), now, owner);
-      return add(first, second);
+
+      try {
+        const second = await syncBatch(operations.slice(middle), now, owner);
+        return add(first, second);
+      } catch (refusal) {
+        // Un refus dans la seconde moitié interrompt tout — mais la première est DÉJÀ partie, et
+        // synchronisée en base. Laisser l'exception filer telle quelle la ferait disparaître du
+        // résumé : l'écran annoncerait « 1 bloquée » sans dire que les autres sont passées, et
+        // c'est sur ce chiffre que l'opérateur décide de laisser repartir le camion.
+        if (refusal instanceof CallerRefused) {
+          throw new CallerRefused(add(first, refusal.summary));
+        }
+
+        throw refusal;
+      }
     }
 
     // Réseau coupé, 5xx, session refusée : rien n'est perdu, tout est replanifié avec
@@ -176,7 +233,19 @@ export async function syncPendingOperations(): Promise<SyncSummary> {
         return total;
       }
 
-      const batch = await syncBatch(operations, now, owner);
+      let batch: SyncSummary;
+
+      try {
+        batch = await syncBatch(operations, now, owner);
+      } catch (error) {
+        // Le serveur a refusé l'opérateur : les lots suivants essuieraient le même verdict.
+        if (error instanceof CallerRefused) {
+          return add(total, error.summary);
+        }
+
+        throw error;
+      }
+
       total = add(total, batch);
 
       // Rien n'est passé : réseau coupé ou serveur en vrac. Insister martèlerait l'API.

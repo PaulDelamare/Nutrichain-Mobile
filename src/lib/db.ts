@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite';
+import { Platform } from 'react-native';
 
 const DATABASE_NAME = 'nutrichain.db';
 
@@ -45,6 +46,39 @@ export const SCHEMA = `
  */
 export const ORPHAN_OPERATION_MESSAGE =
   "Scan enregistré avant l'identification de l'opérateur : son auteur ne peut pas être établi. Il ne peut pas être renvoyé sous votre nom — ressaisissez la réception, puis supprimez-le.";
+
+/** Ce qu'une transaction doit savoir faire — et ce qu'un test doit fournir HONNÊTEMENT. */
+export interface Transactable {
+  getFirstAsync<T>(sql: string, ...params: unknown[]): Promise<T | null>;
+  runAsync(sql: string, ...params: unknown[]): Promise<{ changes: number }>;
+  withExclusiveTransactionAsync(run: (tx: Transactable) => Promise<void>): Promise<void>;
+  withTransactionAsync(run: () => Promise<void>): Promise<void>;
+}
+
+/**
+ * expo-sqlite **ne sait pas** ouvrir de transaction EXCLUSIVE sur le web : l'appel jette
+ * (« withExclusiveTransactionAsync is not supported on web »). L'écriture échouait donc en
+ * silence — aucun statut n'était jamais persisté, ni « synchronisé » ni « rejeté ». Un scan
+ * accepté par le serveur restait affiché « En attente » et repartait indéfiniment.
+ *
+ * Aucun test ne pouvait le voir : ils fournissaient eux-mêmes un `withExclusiveTransactionAsync`
+ * que la plateforme, elle, ne fournit pas. Il a fallu regarder l'écran.
+ *
+ * Sur le web on retombe donc sur la transaction ordinaire — la seule qui existe. Elle isole moins
+ * bien (cf. `saveOperationUpdates`), mais le web est notre plateforme de démonstration, pas le
+ * terminal de terrain : mieux vaut une isolation imparfaite qu'une file qui ne mémorise rien.
+ */
+export async function withTransaction(
+  database: Transactable,
+  run: (tx: Transactable) => Promise<void>
+): Promise<void> {
+  if (Platform.OS === 'web') {
+    await database.withTransactionAsync(() => run(database));
+    return;
+  }
+
+  await database.withExclusiveTransactionAsync(run);
+}
 
 /** L'API d'expo-sqlite dont la migration a besoin — le test la rejoue sur un vrai moteur SQLite. */
 interface Migratable {

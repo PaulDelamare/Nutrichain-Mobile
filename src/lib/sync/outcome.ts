@@ -4,7 +4,11 @@ import type { OperationUpdate, QueuedOperation, SyncItemResult } from './types';
 /** Seul `internal` est transitoire : toute autre erreur vient du payload et se reproduira à l'identique. */
 const TRANSIENT_ERROR_FIELD = 'internal';
 
-function retry(operation: QueuedOperation, now: number, message: string | null): OperationUpdate {
+export function retryOutcome(
+  operation: QueuedOperation,
+  now: number,
+  message: string | null
+): OperationUpdate {
   const attempts = operation.attempts + 1;
 
   return {
@@ -41,7 +45,7 @@ export function resolveOutcome(
   now: number
 ): OperationUpdate {
   if (!result) {
-    return retry(operation, now, null);
+    return retryOutcome(operation, now, null);
   }
 
   const base = {
@@ -65,7 +69,7 @@ export function resolveOutcome(
 
     case 'error':
       return result.error?.field === TRANSIENT_ERROR_FIELD
-        ? retry(operation, now, result.error.message)
+        ? retryOutcome(operation, now, result.error.message)
         : { ...base, status: 'REJECTED', serverId: null };
 
     default: {
