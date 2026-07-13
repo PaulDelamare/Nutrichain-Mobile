@@ -45,7 +45,7 @@ export function resolveOutcome(
   now: number
 ): OperationUpdate {
   if (!result) {
-    return retryOutcome(operation, now,null);
+    return retryOutcome(operation, now, null);
   }
 
   const base = {
@@ -69,7 +69,7 @@ export function resolveOutcome(
 
     case 'error':
       return result.error?.field === TRANSIENT_ERROR_FIELD
-        ? retryOutcome(operation, now,result.error.message)
+        ? retryOutcome(operation, now, result.error.message)
         : { ...base, status: 'REJECTED', serverId: null };
 
     default: {

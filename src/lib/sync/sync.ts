@@ -159,8 +159,21 @@ async function syncBatch(
 
       const middle = Math.floor(operations.length / 2);
       const first = await syncBatch(operations.slice(0, middle), now, owner);
-      const second = await syncBatch(operations.slice(middle), now, owner);
-      return add(first, second);
+
+      try {
+        const second = await syncBatch(operations.slice(middle), now, owner);
+        return add(first, second);
+      } catch (refusal) {
+        // Un refus dans la seconde moitié interrompt tout — mais la première est DÉJÀ partie, et
+        // synchronisée en base. Laisser l'exception filer telle quelle la ferait disparaître du
+        // résumé : l'écran annoncerait « 1 bloquée » sans dire que les autres sont passées, et
+        // c'est sur ce chiffre que l'opérateur décide de laisser repartir le camion.
+        if (refusal instanceof CallerRefused) {
+          throw new CallerRefused(add(first, refusal.summary));
+        }
+
+        throw refusal;
+      }
     }
 
     // Réseau coupé, 5xx, session refusée : rien n'est perdu, tout est replanifié avec

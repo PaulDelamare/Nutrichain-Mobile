@@ -70,6 +70,14 @@ function multiStatus(results: unknown[]): unknown {
 describe('syncPendingOperations', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+
+    // `clearAllMocks` efface les appels, PAS les valeurs `…Once` non consommées. Un test qui
+    // prouve un arrêt anticipé en laisse forcément une derrière lui : sans ce reset, elle déborde
+    // sur le test suivant, qui reçoit un lot fantôme — et l'on passe des heures à débusquer un bug
+    // de production qui n'existe pas.
+    queue.getPendingOperations.mockReset();
+    queue.saveOperationUpdates.mockReset();
+
     queue.saveOperationUpdates.mockResolvedValue(undefined);
     mockedGetUserId.mockResolvedValue('operateur-A');
     mockedGetToken.mockResolvedValue('jwt-123');
@@ -309,10 +317,132 @@ describe('syncPendingOperations', () => {
     expect(summary).toMatchObject({ rejected: 0, retried: 2 });
 
     const updates = queue.saveOperationUpdates.mock.calls.flatMap((c) => c[0]);
+    // Sans cette longueur, l'assertion suivante serait vraie sur un tableau VIDE : une régression
+    // qui cesse de persister la file passerait au vert.
+    expect(updates).toHaveLength(2);
     expect(updates.every((u) => u.status === 'PENDING')).toBe(true);
+
+    // Le motif du serveur, sinon l'opérateur ne voit qu'« en attente » sans savoir de quoi.
+    expect(updates[0].error).toBe("Vous n'avez pas sélectionné d'Organisation active.");
+
+    // Le backoff : sans lui, l'app remartèle l'API en boucle serrée pendant toute la panne.
+    expect(updates.every((u) => u.attempts === 1 && u.nextAttemptAt > Date.now())).toBe(true);
 
     // Le refus vise l'appelant : le découper en deux ne changera pas le verdict.
     expect(call).toBe(1);
+  });
+
+  it('arrête toute la synchronisation au premier refus d’appelant, sans attaquer les lots suivants', async () => {
+    // Le verdict porte sur l'opérateur, pas sur le lot : les lots suivants essuieraient le même
+    // refus. Sans arrêt, une file de 250 scans part en 3 lots, et chacun se fait refuser.
+    queue.getPendingOperations
+      .mockResolvedValueOnce([operation('lot-1')])
+      .mockResolvedValueOnce([operation('lot-2')])
+      .mockResolvedValue([]);
+
+    let call = 0;
+    apiClient.defaults.adapter = (async (config: InternalAxiosRequestConfig) => {
+      call += 1;
+      const response = {
+        data: { status: 403, error: [{ field: 'auth', message: 'Action refusée. Rôle quality insuffisant.' }] },
+        status: 403,
+        statusText: '',
+        headers: {},
+        config,
+      };
+      const error = new AxiosError('Forbidden', undefined, config, null, response);
+      error.response = response;
+      throw error;
+    }) as AxiosAdapter;
+
+    const summary = await syncPendingOperations();
+
+    expect(call).toBe(1);
+    expect(queue.getPendingOperations).toHaveBeenCalledTimes(1);
+    expect(summary.sent).toBe(1);
+  });
+
+  it('n’oublie pas les scans déjà synchronisés quand un refus survient pendant le découpage', async () => {
+    // Le découpage traite les moitiés l'une après l'autre : la première peut être SYNCHRONISÉE en
+    // base avant que la seconde essuie un refus d'appelant. Si l'arrêt de la synchronisation efface
+    // ce qui a déjà réussi, l'écran annonce « 1 bloquée » sans jamais dire que l'autre est partie —
+    // et l'opérateur, lui, décide sur ce chiffre s'il laisse repartir le camion.
+    queue.getPendingOperations
+      .mockResolvedValueOnce([operation('deja-parti'), operation('refuse')])
+      .mockResolvedValue([]);
+
+    apiClient.defaults.adapter = (async (config: InternalAxiosRequestConfig) => {
+      const { items } = JSON.parse(String(config.data)) as { items: { clientOpId: string }[] };
+      const seul = items.length === 1 ? items[0].clientOpId : null;
+
+      // Le lot entier, puis la moitié « refuse » : refus d'appelant. La moitié « deja-parti » passe.
+      if (seul === 'deja-parti') {
+        return {
+          data: multiStatus([{ clientOpId: 'deja-parti', status: 'ok' }]),
+          status: 207,
+          statusText: '',
+          headers: {},
+          config,
+        };
+      }
+
+      const refusPayload =
+        seul === 'refuse'
+          ? { status: 403, error: [{ field: 'auth', message: 'Action refusée. Rôle quality insuffisant.' }] }
+          : { status: 400, error: [{ field: 'shipment_id', message: 'Trop long' }] };
+      const response = {
+        data: refusPayload,
+        status: refusPayload.status,
+        statusText: '',
+        headers: {},
+        config,
+      };
+      const error = new AxiosError('Refus', undefined, config, null, response);
+      error.response = response;
+      throw error;
+    }) as AxiosAdapter;
+
+    const summary = await syncPendingOperations();
+
+    expect(summary).toMatchObject({ sent: 2, synced: 1, rejected: 1 });
+  });
+
+  it('laisse remonter une panne de la base locale survenue pendant le découpage', async () => {
+    // Une panne de la file SQLite n'est pas un refus du serveur. La maquiller en refus d'appelant
+    // ferait terminer la synchronisation sur un résumé serein, alors que rien n'a été persisté.
+    queue.getPendingOperations
+      .mockResolvedValueOnce([operation('op-1'), operation('op-2')])
+      .mockResolvedValue([]);
+    queue.saveOperationUpdates
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('SQLite full'));
+
+    apiClient.defaults.adapter = (async (config: InternalAxiosRequestConfig) => {
+      const { items } = JSON.parse(String(config.data)) as { items: { clientOpId: string }[] };
+
+      if (items.length === 1) {
+        return {
+          data: multiStatus([{ clientOpId: items[0].clientOpId, status: 'ok' }]),
+          status: 207,
+          statusText: '',
+          headers: {},
+          config,
+        };
+      }
+
+      const response = {
+        data: { status: 400, error: [{ field: 'shipment_id', message: 'Trop long' }] },
+        status: 400,
+        statusText: '',
+        headers: {},
+        config,
+      };
+      const error = new AxiosError('Bad Request', undefined, config, null, response);
+      error.response = response;
+      throw error;
+    }) as AxiosAdapter;
+
+    await expect(syncPendingOperations()).rejects.toThrow('SQLite full');
   });
 
   it('rejette les scans qu’un rôle n’a pas le droit d’écrire, en gardant le motif du serveur', async () => {
