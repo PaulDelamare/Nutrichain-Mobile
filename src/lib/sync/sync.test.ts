@@ -277,6 +277,85 @@ describe('syncPendingOperations', () => {
     expect(updates.find((u) => u.clientOpId === 'mauvais')?.status).toBe('REJECTED');
   });
 
+  it('ne détruit PAS la file quand la session n’a pas d’organisation active (400 « auth »)', async () => {
+    // L'API répond 400 `field: auth` quand la session n'a pas d'organisation active — une panne de
+    // SESSION, que la reconnexion répare. Traité comme un 400 de payload, le lot est redécoupé
+    // jusqu'au scan isolé, et CHAQUE scan est rejeté définitivement : une journée de réceptions
+    // terrain, irremplaçables, condamnée par un état transitoire.
+    queue.getPendingOperations
+      .mockResolvedValueOnce([operation('op-1'), operation('op-2')])
+      .mockResolvedValue([]);
+
+    let call = 0;
+    apiClient.defaults.adapter = (async (config: InternalAxiosRequestConfig) => {
+      call += 1;
+      const response = {
+        data: {
+          status: 400,
+          error: [{ field: 'auth', message: "Vous n'avez pas sélectionné d'Organisation active." }],
+        },
+        status: 400,
+        statusText: '',
+        headers: {},
+        config,
+      };
+      const error = new AxiosError('Bad Request', undefined, config, null, response);
+      error.response = response;
+      throw error;
+    }) as AxiosAdapter;
+
+    const summary = await syncPendingOperations();
+
+    expect(summary).toMatchObject({ rejected: 0, retried: 2 });
+
+    const updates = queue.saveOperationUpdates.mock.calls.flatMap((c) => c[0]);
+    expect(updates.every((u) => u.status === 'PENDING')).toBe(true);
+
+    // Le refus vise l'appelant : le découper en deux ne changera pas le verdict.
+    expect(call).toBe(1);
+  });
+
+  it('rejette les scans qu’un rôle n’a pas le droit d’écrire, en gardant le motif du serveur', async () => {
+    // Un `quality` ou un `viewer` n'a pas le droit d'écrire une réception : le serveur répond 403,
+    // et il répondra 403 à la millionième tentative. Le laisser « En attente » est un mensonge —
+    // l'opération n'est ni supprimable, ni remédiable, et retape l'API toutes les 30 minutes.
+    queue.getPendingOperations
+      .mockResolvedValueOnce([operation('op-1'), operation('op-2')])
+      .mockResolvedValue([]);
+
+    let call = 0;
+    apiClient.defaults.adapter = (async (config: InternalAxiosRequestConfig) => {
+      call += 1;
+      const response = {
+        data: {
+          status: 403,
+          error: [{ field: 'auth', message: 'Action refusée. Rôle quality insuffisant.' }],
+        },
+        status: 403,
+        statusText: '',
+        headers: {},
+        config,
+      };
+      const error = new AxiosError('Forbidden', undefined, config, null, response);
+      error.response = response;
+      throw error;
+    }) as AxiosAdapter;
+
+    const summary = await syncPendingOperations();
+
+    expect(summary).toMatchObject({ rejected: 2, retried: 0 });
+
+    const updates = queue.saveOperationUpdates.mock.calls.flatMap((c) => c[0]);
+    expect(updates.every((u) => u.status === 'REJECTED')).toBe(true);
+
+    // Le motif du SERVEUR, pas une phrase générique : sans lui, l'opérateur ignore que c'est son
+    // rôle qui bloque — et l'admin ne sait pas quoi corriger.
+    expect(updates[0].error).toBe('Action refusée. Rôle quality insuffisant.');
+
+    // Le verdict porte sur l'appelant : insister avec les lots suivants ne ferait que marteler l'API.
+    expect(call).toBe(1);
+  });
+
   it('réessaie les erreurs serveur transitoires uniquement', async () => {
     queue.getPendingOperations
       .mockResolvedValueOnce([operation('op-1'), operation('op-2')])
