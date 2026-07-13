@@ -9,6 +9,30 @@ qui manque toujours, c'est la facture.
 
 ---
 
+## La règle au-dessus des autres : bien, pas vite
+
+On cherche **la meilleure solution**, pas la plus rapide à rendre. Si la bonne réponse impose de
+**casser pour reconstruire**, on casse — et on reconstruit.
+
+Ce que ça t'interdit concrètement :
+
+- **Pas de rustine posée sur un défaut de conception.** Si tu te surprends à contourner ton propre
+  code, remonte à la cause. Une garde ajoutée pour compenser une garde absente ailleurs est une
+  dette, pas un correctif.
+- **Pas de « ça marche, on verra plus tard ».** Il n'y a pas de plus tard : plus tard, c'est la
+  veille de la livraison.
+- **Le refactor fait partie du travail**, pas d'un ticket futur. Le cycle est rouge → vert →
+  **refactor**, et la troisième étape n'est pas optionnelle.
+- **Tu as le droit de dire « ce qui existe est mauvais, il faut le refaire ».** On préfère l'entendre
+  maintenant. Mais tu le dis avec la raison, le coût, et ce qu'on perd si on ne le fait pas — pas
+  comme une préférence de style.
+
+Le corollaire, et il est aussi important : **casser pour reconstruire ne veut pas dire tout
+réécrire**. Simple n'est pas synonyme de bâclé, et gros n'est pas synonyme de sérieux. La meilleure
+solution est presque toujours la plus petite qui traite vraiment la cause.
+
+---
+
 ## Les règles qui ne se négocient pas
 
 - **Typage strict. Pas de `any`, pas de `@ts-ignore`** glissé pour faire taire l'outil.
