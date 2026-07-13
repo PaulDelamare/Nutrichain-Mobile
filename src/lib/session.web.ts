@@ -1,4 +1,5 @@
 const AUTH_TOKEN_KEY = 'auth_token';
+const USER_ID_KEY = 'auth_user_id';
 
 /**
  * expo-secure-store n'a pas d'implémentation web (le module y est vide) : sans cette variante,
@@ -15,4 +16,16 @@ export async function getToken(): Promise<string | null> {
 
 export async function clearToken(): Promise<void> {
   localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+export async function saveUserId(userId: string): Promise<void> {
+  localStorage.setItem(USER_ID_KEY, userId);
+}
+
+export async function getUserId(): Promise<string | null> {
+  return localStorage.getItem(USER_ID_KEY);
+}
+
+export async function clearUserId(): Promise<void> {
+  localStorage.removeItem(USER_ID_KEY);
 }

@@ -3,10 +3,14 @@ import { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from '
 import { apiClient } from './api';
 import { fetchCurrentUser } from './me';
 
+jest.mock('./cache');
 jest.mock('./session', () => ({
   getToken: jest.fn().mockResolvedValue('jwt-123'),
   clearToken: jest.fn(),
   saveToken: jest.fn(),
+  getUserId: jest.fn().mockResolvedValue('user-1'),
+  clearUserId: jest.fn(),
+  saveUserId: jest.fn(),
 }));
 jest.mock('expo-router', () => ({ router: { replace: jest.fn() } }));
 
