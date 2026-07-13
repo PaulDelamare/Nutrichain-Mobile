@@ -11,6 +11,7 @@ import { BRAND } from '@/lib/theme';
 // Statut de lot → libellé + couleur (miroir des statuts serveur EN_STOCK/BLOQUE/ALERTE…).
 const STATUT_STYLE: Record<string, { label: string; color: string; bg: string }> = {
   EN_STOCK: { label: 'En stock', color: '#047857', bg: '#D1FAE5' },
+  EN_ATTENTE_QC: { label: 'En attente de contrôle', color: '#3730A3', bg: '#E0E7FF' },
   BLOQUE: { label: 'En quarantaine', color: '#B91C1C', bg: '#FEE2E2' },
   ALERTE: { label: 'Sous rappel', color: '#B91C1C', bg: '#FEE2E2' },
   CONSOMME: { label: 'Consommé', color: '#6B7280', bg: '#F3F4F6' },

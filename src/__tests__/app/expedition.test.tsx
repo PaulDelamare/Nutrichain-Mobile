@@ -102,7 +102,8 @@ describe('écran d’expédition', () => {
 
     expect(mockedToastMessage).toHaveBeenCalledWith(
       'Lot LOT-001 non expédiable',
-      expect.stringContaining('ALERTE')
+      // L'opérateur lit une PHRASE, pas le code brut du statut.
+      expect.stringContaining('sous rappel produit')
     );
     expect(screen.queryByText('Yaourt nature')).toBeNull();
   });
