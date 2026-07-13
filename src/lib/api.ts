@@ -10,7 +10,10 @@ const API_KEY = process.env.EXPO_PUBLIC_API_KEY ?? '';
 export const apiClient = axios.create({
   baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' },
-  timeout: 10000,
+  // Une transformation à six lots enchaîne, dans UNE transaction, autant de contrôles de stock,
+  // de mouvements, de maillons d'audit et un événement EPCIS. Abandonner à 10 s ferait croire à
+  // un échec une opération que le serveur a commitée — et l'opérateur la resaisirait.
+  timeout: 30000,
 });
 
 apiClient.interceptors.request.use(async (config) => {

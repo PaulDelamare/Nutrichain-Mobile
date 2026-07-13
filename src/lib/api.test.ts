@@ -43,10 +43,13 @@ describe('configuration du client', () => {
 
   it('cible l’API configurée avec un délai d’attente borné', () => {
     // Un appel sans timeout reste pendant indéfiniment sur le réseau dégradé d'un entrepôt.
+    // Mais trop court est pire : une transformation à six lots (contrôles de stock, mouvements,
+    // maillons d'audit, événement EPCIS, le tout dans UNE transaction) peut dépasser 10 s, et
+    // abandonner ferait croire à un échec une opération commitée — l'opérateur la ressaisirait.
     expect(apiClient.defaults.baseURL).toBe(
       process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000'
     );
-    expect(apiClient.defaults.timeout).toBe(10000);
+    expect(apiClient.defaults.timeout).toBe(30000);
   });
 
   it('envoie la clé API sur les routes d’authentification, qui l’exigent', async () => {

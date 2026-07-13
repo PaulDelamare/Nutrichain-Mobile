@@ -16,7 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 
-import { LocationScanner } from '@/components/location-scanner';
+import { CodeScanner } from '@/components/code-scanner';
 import { OptionPicker } from '@/components/option-picker';
 import { loadProducts, loadSuppliers, type Product, type Supplier } from '@/lib/catalog';
 import {
@@ -269,8 +269,10 @@ export default function ReceptionScreen() {
         </KeyboardAvoidingView>
       )}
 
-      <LocationScanner
+      <CodeScanner
         visible={scanningLocation}
+        title="Scanner l'emplacement"
+        hint="Placez l'étiquette du frigo, du congélateur ou de l'étagère dans le cadre."
         onClose={() => setScanningLocation(false)}
         onScan={handleLocationScan}
       />
