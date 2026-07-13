@@ -1,6 +1,6 @@
 import * as Crypto from 'expo-crypto';
 
-import { getDatabase } from '../db';
+import { getDatabase, withTransaction } from '../db';
 import { getUserId } from '../session';
 import {
   BLOCKED_STATUSES,
@@ -130,7 +130,7 @@ export async function requeueOperation(clientOpId: string): Promise<string> {
   const userId = await requireOwner();
   const newClientOpId = Crypto.randomUUID();
 
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withTransaction(db, async (tx) => {
     const row = await tx.getFirstAsync<{ payload: string; type: string }>(
       `SELECT payload, type FROM operations
         WHERE client_op_id = ? AND user_id = ?
@@ -212,7 +212,7 @@ export async function saveOperationUpdates(updates: OperationUpdate[]): Promise<
   // parallèle sur la même connexion — une réception enregistrée pendant la synchro serait
   // aspirée dans la transaction, et un rollback effacerait un scan que l'écran a déjà
   // annoncé comme sauvegardé.
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withTransaction(db, async (tx) => {
     for (const update of updates) {
       await tx.runAsync(
         `UPDATE operations
