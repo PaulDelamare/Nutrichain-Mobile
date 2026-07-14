@@ -10,6 +10,8 @@ export interface Product {
   id: string;
   nom: string;
   unite_reference: string;
+  /** GTIN du produit (non-null côté serveur) : la clé qui relie un code-barres scanné à ce produit. */
+  code_gtin: string;
 }
 
 interface Envelope<T> {

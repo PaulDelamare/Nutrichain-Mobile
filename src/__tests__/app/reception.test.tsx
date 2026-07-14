@@ -8,16 +8,22 @@ import { ApiError } from '@/lib/errors';
 
 import ReceptionScreen from '@/app/reception';
 
+// Le paramètre de route `code` = ce que le scan a lu. Pilotable par test pour simuler un scan.
+const mockParams = { current: {} as { code?: string } };
+
 jest.mock('@/lib/catalog');
 jest.mock('@/lib/equipment');
 jest.mock('@/lib/sync/queue');
 jest.mock('@/lib/sync/sync');
 jest.mock('expo-router', () => ({
   router: { back: jest.fn() },
-  useLocalSearchParams: () => ({}),
+  useLocalSearchParams: () => mockParams.current,
 }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
 jest.mock('react-native-toast-message', () => ({ show: jest.fn() }));
+
+/** Étiquette réellement imprimée par NutriChain : URL GS1 Digital Link (GTIN + lot + DLC). */
+const DIGITAL_LINK = 'https://api.nutrichain.fr/gs1/01/3042040209123/10/260714-ABC123/17/261231';
 
 const catalog = jest.mocked({ loadProducts, loadSuppliers });
 const mockedLoadEquipment = jest.mocked(loadEquipment);
@@ -38,9 +44,11 @@ async function fillValidReceipt(): Promise<void> {
 describe('écran de réception', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockParams.current = {};
     catalog.loadSuppliers.mockResolvedValue([{ id: 'f-1', nom_ferme: 'Ferme Dupont' }]);
+    // Le GTIN du produit permet de le retrouver depuis un code scanné (03042040209123 normalisé).
     catalog.loadProducts.mockResolvedValue([
-      { id: 'p-1', nom: 'Lait cru', unite_reference: 'kg' },
+      { id: 'p-1', nom: 'Lait cru', unite_reference: 'kg', code_gtin: '3042040209123' },
     ]);
     mockedLoadEquipment.mockResolvedValue([]);
     mockedEnqueue.mockResolvedValue('op-1');
@@ -121,5 +129,66 @@ describe('écran de réception', () => {
         expect.objectContaining({ statut_controle: 'OK' })
       )
     );
+  });
+
+  // ─── Décodage GS1 du scan (issue #31) : le scan doit remplir le formulaire ────────────────
+  // Avant : le code scanné (URL Digital Link de 60 caractères) partait BRUT dans « N° d'expédition »,
+  // et le GTIN / lot / DLC étaient jetés — la palette rescannée redevenait un lot inconnu.
+
+  // BUG REPRODUIT : sur le code actuel, l'URL brute remplit le n° d'expédition et rien n'est décodé.
+  it('décode l’étiquette scannée au lieu de jeter le GTIN, le lot et la DLC', async () => {
+    mockParams.current = { code: DIGITAL_LINK };
+    render(<ReceptionScreen />);
+    await waitFor(() => expect(screen.getByText('Ferme Dupont')).toBeTruthy());
+
+    // L'URL brute ne doit PAS atterrir telle quelle dans le n° d'expédition.
+    expect(screen.queryByDisplayValue(DIGITAL_LINK)).toBeNull();
+    // Le numéro de lot décodé (AI 10) est pré-rempli et visible.
+    expect(screen.getByDisplayValue('260714-ABC123')).toBeTruthy();
+  });
+
+  // CAS CORRECT : le produit est retrouvé par GTIN, et lot_number + date_peremption sont ENVOYÉS.
+  it('envoie le produit (par GTIN), le lot et la DLC décodés du scan', async () => {
+    mockParams.current = { code: DIGITAL_LINK };
+    render(<ReceptionScreen />);
+    await waitFor(() => expect(screen.getByText('Ferme Dupont')).toBeTruthy());
+
+    // Le produit et l'unité sont déduits du GTIN ; il reste le fournisseur, le n° d'expédition
+    // (absent de notre étiquette) et la quantité à saisir.
+    fireEvent.press(screen.getByText('Ferme Dupont'));
+    fireEvent.changeText(screen.getByPlaceholderText('SHIP-2026-001'), 'SHIP-1');
+    fireEvent.changeText(screen.getByPlaceholderText('0'), '10');
+    fireEvent.press(screen.getByText('Enregistrer la réception'));
+
+    await waitFor(() =>
+      expect(mockedEnqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id_produit: 'p-1',
+          shipment_id: 'SHIP-1',
+          lot_number: '260714-ABC123',
+          date_peremption: '2026-12-31',
+        })
+      )
+    );
+  });
+
+  // NE PAS MENTIR : un GTIN scanné absent du catalogue ne doit pas pré-sélectionner un produit au
+  // hasard — on le dit, et l'opérateur choisit lui-même.
+  it('n’invente pas de produit quand le GTIN scanné est inconnu du catalogue', async () => {
+    mockParams.current = { code: 'https://api.nutrichain.fr/gs1/01/9999999999999/10/LOT1' };
+    render(<ReceptionScreen />);
+    await waitFor(() => expect(screen.getByText('Ferme Dupont')).toBeTruthy());
+
+    expect(screen.getByText(/introuvable dans le catalogue/i)).toBeTruthy();
+  });
+
+  // PAS DE RÉGRESSION : un code non-GS1 (ni URL, ni element string) n'est pas réinterprété — il
+  // garde sa place dans le n° d'expédition, comme avant.
+  it('laisse un code non-GS1 dans le n° d’expédition, sans le réinterpréter', async () => {
+    mockParams.current = { code: 'SHIP-2026-001' };
+    render(<ReceptionScreen />);
+    await waitFor(() => expect(screen.getByText('Ferme Dupont')).toBeTruthy());
+
+    expect(screen.getByDisplayValue('SHIP-2026-001')).toBeTruthy();
   });
 });

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -26,6 +26,7 @@ import {
   loadEquipment,
   type Equipment,
 } from '@/lib/equipment';
+import { LOT_NUMBER_MAX_LENGTH, normalizeGtin, parseScannedCode } from '@/lib/gs1';
 import { enqueueReceipt } from '@/lib/sync/queue';
 import { SHIPMENT_ID_MAX_LENGTH, buildReceipt } from '@/lib/sync/receipt';
 import { syncPendingOperations } from '@/lib/sync/sync';
@@ -57,6 +58,14 @@ export default function ReceptionScreen() {
   const insets = useSafeAreaInsets();
   const { code } = useLocalSearchParams<{ code?: string }>();
 
+  // Le scan doit REMPLIR le formulaire, pas y coller l'URL brute. On décode l'étiquette (Digital
+  // Link ou element string) une fois pour en tirer produit (GTIN), lot (AI 10), DLC (AI 17), SSCC.
+  // `isDecoded` distingue un vrai code GS1 d'un code nu : ce dernier garde son comportement d'origine
+  // (il remplit le n° d'expédition) — on ne réinterprète pas ce qu'on n'a pas su décoder.
+  const scanned = useMemo(() => parseScannedCode(code ?? ''), [code]);
+  const isDecoded = scanned.gtin !== null || scanned.sscc !== null || scanned.expiry !== null;
+  const decodedExpiry = isDecoded ? scanned.expiry : null;
+
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
@@ -64,7 +73,10 @@ export default function ReceptionScreen() {
 
   const [supplierId, setSupplierId] = useState('');
   const [productId, setProductId] = useState('');
-  const [shipmentId, setShipmentId] = useState(code ?? '');
+  // SSCC scanné → n° d'expédition. Pour notre étiquette (GS1 sans SSCC), on laisse VIDE plutôt que
+  // d'y coller l'URL ; un code nu (non GS1) conserve l'ancien comportement.
+  const [shipmentId, setShipmentId] = useState(scanned.sscc ?? (isDecoded ? '' : code ?? ''));
+  const [lotNumber, setLotNumber] = useState(isDecoded ? scanned.lotNumber ?? '' : '');
   const [quantity, setQuantity] = useState('');
   const [unit, setUnit] = useState('');
   const [status, setStatus] = useState<ReceiptPayload['statut_controle']>('OK');
@@ -79,6 +91,22 @@ export default function ReceptionScreen() {
   // clés étrangères côté serveur, et « KG » n'y existe pas — c'est « kg ». Une constante
   // locale ferait accepter la réception puis rejeter en silence à la synchronisation.
   const units = [...new Set(products.map((product) => product.unite_reference))];
+
+  // Produit reconnu par le GTIN scanné : DÉRIVÉ au rendu, jamais stocké en état (le stocker
+  // imposerait de le resynchroniser à la main dans un effet). Il sert de valeur PAR DÉFAUT tant que
+  // l'opérateur n'a pas choisi lui-même — d'où `productId || ...` plus bas.
+  const gtinProduct = useMemo(
+    () =>
+      scanned.gtin
+        ? products.find((product) => normalizeGtin(product.code_gtin) === scanned.gtin) ?? null
+        : null,
+    [products, scanned]
+  );
+  const effectiveProductId = productId || gtinProduct?.id || '';
+  const effectiveUnit = unit || gtinProduct?.unite_reference || '';
+  // NE PAS MENTIR : GTIN scanné mais absent du catalogue CHARGÉ → on le signale, sans rien
+  // pré-sélectionner. (Catalogue non chargé = on ne sait pas encore : aucun message.)
+  const productUnmatched = scanned.gtin !== null && products.length > 0 && gtinProduct === null;
 
   useEffect(() => {
     // Le catalogue est indispensable à la saisie ; l'emplacement ne l'est pas. Les charger
@@ -127,12 +155,14 @@ export default function ReceptionScreen() {
 
   const receipt = buildReceipt({
     supplierId,
-    productId,
+    productId: effectiveProductId,
     shipmentId,
     quantity,
-    unit,
+    unit: effectiveUnit,
     status,
     equipmentId: location?.id,
+    lotNumber,
+    expiry: decodedExpiry ?? undefined,
   });
 
   // Écrit réellement la réception dans la file locale (chemin nominal, ou après confirmation de
@@ -200,16 +230,44 @@ export default function ReceptionScreen() {
               onSelect={setSupplierId}
             />
 
-            <OptionPicker
-              label="Produit"
-              options={products.map((p) => ({ value: p.id, label: p.nom }))}
-              selected={productId}
-              onSelect={(id) => {
-                setProductId(id);
-                const product = products.find((p) => p.id === id);
-                if (product) setUnit(product.unite_reference);
-              }}
-            />
+            <View style={styles.field}>
+              <OptionPicker
+                label="Produit"
+                options={products.map((p) => ({ value: p.id, label: p.nom }))}
+                selected={effectiveProductId}
+                onSelect={(id) => {
+                  setProductId(id);
+                  const product = products.find((p) => p.id === id);
+                  if (product) setUnit(product.unite_reference);
+                }}
+              />
+
+              {/* NE PAS MENTIR : GTIN scanné inconnu du catalogue → aucune sélection, on le dit. */}
+              {productUnmatched && (
+                <Text style={styles.warning}>
+                  Produit du code-barres introuvable dans le catalogue — sélectionnez-le manuellement.
+                </Text>
+              )}
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>N° de lot (fournisseur)</Text>
+              <TextInput
+                style={styles.input}
+                value={lotNumber}
+                onChangeText={setLotNumber}
+                placeholder="260714-ABC123"
+                autoCapitalize="characters"
+                autoCorrect={false}
+                maxLength={LOT_NUMBER_MAX_LENGTH}
+              />
+
+              {/* DLC lue sur l'étiquette (AI 17), affichée SEULEMENT si décodée — jamais une date
+                  inventée. Non éditable : une DLC est une donnée sanitaire, pas un champ à taper. */}
+              {decodedExpiry && (
+                <Text style={styles.dlcInfo}>DLC lue sur l&apos;étiquette : {decodedExpiry}</Text>
+              )}
+            </View>
 
             <View style={styles.field}>
               <Text style={styles.label}>N° d&apos;expédition (SSCC)</Text>
@@ -237,7 +295,7 @@ export default function ReceptionScreen() {
             <OptionPicker
               label="Unité"
               options={units.map((u) => ({ value: u, label: u }))}
-              selected={unit}
+              selected={effectiveUnit}
               onSelect={setUnit}
             />
 
@@ -394,6 +452,8 @@ const styles = StyleSheet.create({
   locationName: { fontSize: 14, fontWeight: '600', color: '#111827' },
   locationPlace: { fontSize: 12, color: '#6B7280' },
   warning: { fontSize: 12, color: '#B45309' },
+  // Donnée lue sur l'étiquette (verte = confirmée), pas saisie à la main ni supposée.
+  dlcInfo: { fontSize: 12, color: '#047857', fontWeight: '600' },
   // Conséquence sanitaire lourde : fond ambré pour qu'elle ne se lise pas comme une note anodine.
   quarantineNotice: {
     fontSize: 13,
