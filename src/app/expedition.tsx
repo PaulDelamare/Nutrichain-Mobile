@@ -53,6 +53,9 @@ export default function ExpeditionScreen() {
 
   const [customerId, setCustomerId] = useState('');
   const [shipmentId, setShipmentId] = useState('');
+  // (issue #76) Déléguer le n° au serveur : il génère alors un SSCC conforme GS1. Évite à l'opérateur
+  // d'inventer un identifiant unique par organisation — et le rejet pour collision devant le camion.
+  const [autoShipmentId, setAutoShipmentId] = useState(false);
   const [carrier, setCarrier] = useState('');
   const [address, setAddress] = useState('');
   const [lots, setLots] = useState<LotLine[]>([]);
@@ -89,6 +92,7 @@ export default function ExpeditionScreen() {
         if (!alive || !draft) return;
         setCustomerId(draft.customerId);
         setShipmentId(draft.shipmentId);
+        setAutoShipmentId(draft.autoShipmentId ?? false);
         setCarrier(draft.carrier);
         setAddress(draft.address);
         setLots(draft.lots);
@@ -102,10 +106,13 @@ export default function ExpeditionScreen() {
   // Le brouillon suit la saisie — écriture SQLite locale — mais jamais un formulaire VIDE : ça
   // effacerait le brouillon qu'on vient de restaurer au premier rendu.
   useEffect(() => {
-    const vide = !customerId && !shipmentId && !carrier && !address && lots.length === 0;
+    const vide =
+      !customerId && !shipmentId && !autoShipmentId && !carrier && !address && lots.length === 0;
     if (vide) return;
-    void saveShipmentDraft({ customerId, shipmentId, carrier, address, lots }).catch(() => undefined);
-  }, [customerId, shipmentId, carrier, address, lots]);
+    void saveShipmentDraft({ customerId, shipmentId, autoShipmentId, carrier, address, lots }).catch(
+      () => undefined
+    );
+  }, [customerId, shipmentId, autoShipmentId, carrier, address, lots]);
 
   // La vérification d'un lot passe par le réseau, et l'opérateur peut annuler pendant ce temps.
   // Chaque scan a donc un numéro de session : fermer la modale l'invalide. Sans ça, une palette
@@ -165,9 +172,11 @@ export default function ExpeditionScreen() {
     setLots((current) => [...current, { batch, quantity: '' }]);
   };
 
+  // 'AUTO' fait générer un SSCC côté serveur. Le mot fait 4 caractères : il franchit la borne
+  // minimale du schéma, là où un champ laissé vide serait rejeté par `buildShipment`.
   const payload = buildShipment({
     customerId,
-    shipmentId,
+    shipmentId: autoShipmentId ? 'AUTO' : shipmentId,
     carrier,
     address,
     lots: lots.map((line) => ({
@@ -183,7 +192,8 @@ export default function ExpeditionScreen() {
     setSaving(true);
 
     try {
-      await createShipment(payload);
+      // Le n° réellement enregistré : identique à la saisie, ou le SSCC généré par le serveur.
+      const assignedId = await createShipment(payload);
 
       // Envoyée : le brouillon a fait son office. Le garder le ferait resurgir sur la suivante.
       await clearShipmentDraft().catch(() => undefined);
@@ -191,7 +201,8 @@ export default function ExpeditionScreen() {
       Toast.show({
         type: 'success',
         text1: 'Expédition enregistrée',
-        text2: 'Les lots expédiés sont désormais reliés à ce client.',
+        // On affiche TOUJOURS le n° : en mode 'AUTO', c'est le seul endroit où l'opérateur le découvre.
+        text2: `N° d'expédition : ${assignedId}. Lots reliés à ce client.`,
       });
       router.back();
     } catch (error: unknown) {
@@ -255,15 +266,33 @@ export default function ExpeditionScreen() {
             />
 
             <View style={styles.field}>
-              <Text style={styles.label}>N° de transport</Text>
-              <TextInput
-                style={styles.input}
-                value={shipmentId}
-                onChangeText={setShipmentId}
-                placeholder="EXP-2026-001"
-                autoCapitalize="characters"
-                maxLength={100}
-              />
+              <View style={styles.labelRow}>
+                <Text style={styles.label}>N° de transport</Text>
+                <TouchableOpacity onPress={() => setAutoShipmentId((auto) => !auto)} hitSlop={8}>
+                  <Text style={styles.autoToggle}>
+                    {autoShipmentId ? 'Saisir manuellement' : 'Générer un n° (SSCC)'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {autoShipmentId ? (
+                // Champ laissé vide : le serveur attribuera un SSCC conforme GS1 à l'enregistrement.
+                <View style={styles.autoNotice}>
+                  <Ionicons name="barcode-outline" size={18} color={BRAND.primary} />
+                  <Text style={styles.autoNoticeText}>
+                    Attribué par le serveur (SSCC) à l&apos;enregistrement, puis affiché.
+                  </Text>
+                </View>
+              ) : (
+                <TextInput
+                  style={styles.input}
+                  value={shipmentId}
+                  onChangeText={setShipmentId}
+                  placeholder="EXP-2026-001"
+                  autoCapitalize="characters"
+                  maxLength={100}
+                />
+              )}
             </View>
 
             <View style={styles.field}>
@@ -399,7 +428,22 @@ const styles = StyleSheet.create({
   loader: { marginTop: 48 },
   form: { padding: 20, gap: 18, paddingBottom: 48 },
   field: { gap: 8 },
+  labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   label: { fontSize: 13, fontWeight: '700', color: '#374151' },
+  autoToggle: { fontSize: 13, fontWeight: '600', color: BRAND.primary },
+  autoNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1,
+    borderColor: BRAND.primary,
+    borderStyle: 'dashed',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  autoNoticeText: { flex: 1, fontSize: 13, color: '#0F766E', fontWeight: '500' },
   input: {
     backgroundColor: '#fff',
     borderWidth: 1,

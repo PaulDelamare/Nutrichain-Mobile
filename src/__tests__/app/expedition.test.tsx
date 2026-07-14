@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import Toast from 'react-native-toast-message';
 
 import ExpeditionScreen from '@/app/expedition';
 import { loadBatches, lookupBatch, type BatchLookup, type Batch } from '@/lib/batches';
@@ -21,6 +22,12 @@ jest.mock('@/lib/shipment', () => ({
 }));
 jest.mock('@/lib/draft');
 jest.mock('@/lib/toast');
+// La confirmation de succès passe par `Toast.show` (pas `toastMessage`) : on le capture pour vérifier
+// que le n° d'expédition attribué par le serveur y est bien affiché.
+jest.mock('react-native-toast-message', () => ({
+  __esModule: true,
+  default: { show: jest.fn(), hide: jest.fn() },
+}));
 jest.mock('@/hooks/use-online-status', () => ({ useOnlineStatus: () => true }));
 jest.mock('expo-router', () => ({ router: { back: jest.fn() } }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
@@ -80,6 +87,7 @@ const mockedToastMessage = jest.mocked(toastMessage);
 const mockedLoadShipmentDraft = jest.mocked(loadShipmentDraft);
 const mockedSaveShipmentDraft = jest.mocked(saveShipmentDraft);
 const mockedClearShipmentDraft = jest.mocked(clearShipmentDraft);
+const mockedToastShow = jest.mocked(Toast.show);
 
 function batch(overrides: Partial<Batch> = {}): Batch {
   return {
@@ -119,6 +127,7 @@ describe('écran d’expédition', () => {
     mockedLoadShipmentDraft.mockResolvedValue({
       customerId: 'c-1',
       shipmentId: 'EXP-2026-042',
+      autoShipmentId: false,
       carrier: 'Transporteur Nord',
       address: '9 quai des Docks',
       lots: [{ batch: batch({ id: 'b-ship', lot_number: 'LOT-CHARGE-7' }), quantity: '15' }],
@@ -129,6 +138,25 @@ describe('écran d’expédition', () => {
     // Le n° de transport et le lot chargé reviennent, sans re-scan ni re-saisie.
     await waitFor(() => expect(screen.getByDisplayValue('EXP-2026-042')).toBeTruthy());
     expect(screen.getByText(/LOT-CHARGE-7/)).toBeTruthy();
+  });
+
+  // (issue #76) Le choix « laisser le serveur générer » fait partie de la saisie : un 401 ne doit pas
+  // le perdre non plus, sinon l'opérateur re-bascule en mode auto à chaque reprise.
+  it('restaure le mode « génération serveur » après une session expirée', async () => {
+    mockedLoadShipmentDraft.mockResolvedValue({
+      customerId: 'c-1',
+      shipmentId: '',
+      autoShipmentId: true,
+      carrier: 'Transporteur Nord',
+      address: '9 quai des Docks',
+      lots: [],
+    });
+
+    render(<ExpeditionScreen />);
+
+    // Le champ manuel reste masqué et la bascule propose de revenir à la saisie : on est bien en auto.
+    await waitFor(() => expect(screen.getByText('Saisir manuellement')).toBeTruthy());
+    expect(screen.queryByPlaceholderText('EXP-2026-001')).toBeNull();
   });
 
   // ⚠️ LE test de la course. La vérification passe par le réseau : plusieurs scans peuvent être en
@@ -292,6 +320,57 @@ describe('écran d’expédition', () => {
       expect(mockedToastMessage).toHaveBeenCalledWith(
         'Envoi interrompu',
         expect.stringContaining('peut-être été enregistrée')
+      )
+    );
+  });
+
+  // (issue #76) L'opérateur devait inventer un n° unique par organisation ; une collision (contrainte
+  // d'unicité en base) le faisait rejeter devant le camion, sans qu'il puisse deviner ce qui est pris.
+  // Le bouton « Générer un n° (SSCC) » envoie 'AUTO' : le serveur attribue un SSCC conforme GS1.
+  it('laisse le serveur générer le n° et affiche le SSCC retourné', async () => {
+    mockedCreateShipment.mockResolvedValue('006141410000000157');
+
+    render(<ExpeditionScreen />);
+    await scanLot('LOT-001');
+
+    fireEvent.press(await screen.findByText('Épicerie du Coin'));
+    // L'opérateur ne saisit AUCUN numéro : il délègue au serveur.
+    fireEvent.press(screen.getByText('Générer un n° (SSCC)'));
+    // Le champ de saisie manuelle disparaît : il n'y a plus rien à inventer.
+    expect(screen.queryByPlaceholderText('EXP-2026-001')).toBeNull();
+    fireEvent.changeText(screen.getByPlaceholderText('Transports Martin'), 'Transports Martin');
+    fireEvent.changeText(screen.getByPlaceholderText('Quantité expédiée (kg)'), '20');
+    fireEvent.press(screen.getByText(/Enregistrer l/));
+
+    // Le payload porte 'AUTO' : c'est CE mot qui déclenche la génération côté serveur.
+    await waitFor(() =>
+      expect(mockedCreateShipment).toHaveBeenCalledWith(
+        expect.objectContaining({ shipment_id: 'AUTO' })
+      )
+    );
+    // Le n° attribué revient à l'opérateur — sinon il repartirait sans connaître son SSCC.
+    expect(mockedToastShow).toHaveBeenCalledWith(
+      expect.objectContaining({ text2: expect.stringContaining('006141410000000157') })
+    );
+  });
+
+  // Garde-fou : le mode automatique ne doit pas détourner une saisie manuelle. Un n° tapé part TEL
+  // QUEL (jamais remplacé par 'AUTO'), sinon on générerait un doublon là où l'opérateur voulait SON n°.
+  it('envoie le n° saisi à la main quand l’opérateur ne délègue pas', async () => {
+    mockedCreateShipment.mockResolvedValue('EXP-2026-009');
+
+    render(<ExpeditionScreen />);
+    await scanLot('LOT-001');
+
+    fireEvent.press(await screen.findByText('Épicerie du Coin'));
+    fireEvent.changeText(screen.getByPlaceholderText('EXP-2026-001'), 'EXP-2026-009');
+    fireEvent.changeText(screen.getByPlaceholderText('Transports Martin'), 'Transports Martin');
+    fireEvent.changeText(screen.getByPlaceholderText('Quantité expédiée (kg)'), '20');
+    fireEvent.press(screen.getByText(/Enregistrer l/));
+
+    await waitFor(() =>
+      expect(mockedCreateShipment).toHaveBeenCalledWith(
+        expect.objectContaining({ shipment_id: 'EXP-2026-009' })
       )
     );
   });

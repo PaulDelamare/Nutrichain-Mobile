@@ -166,6 +166,7 @@ const SHIP_DRAFT: ShipmentDraft = {
   shipmentId: 'EXP-001',
   carrier: 'DHL',
   address: '1 rue de la Ferme',
+  autoShipmentId: false,
   lots: [
     {
       batch: {
