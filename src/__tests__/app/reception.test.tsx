@@ -1,4 +1,5 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react-native';
+import Toast from 'react-native-toast-message';
 
 import { loadProducts, loadSuppliers } from '@/lib/catalog';
 import { loadEquipment } from '@/lib/equipment';
@@ -262,5 +263,29 @@ describe('écran de réception', () => {
 
     expect(screen.queryByText(/supérieure à 0/i)).toBeNull();
     expect(screen.queryByText(/caractères/i)).toBeNull();
+  });
+
+  // ─── Ne pas mentir sur la synchro (issue #48) ─────────────────────────────────────────────
+  // L'écoute réseau meurt avec l'app (pas de tâche de fond). Promettre « synchronisée dès que le
+  // réseau reviendra » à un opérateur qui va fermer l'app est un mensonge : rien ne partira.
+  it('promet un envoi honnête, conditionné à l’application ouverte', async () => {
+    render(<ReceptionScreen />);
+    await fillValidReceipt();
+
+    fireEvent.press(screen.getByText('Enregistrer la réception'));
+
+    await waitFor(() =>
+      expect(jest.mocked(Toast.show)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'success',
+          text1: 'Réception enregistrée',
+          text2: expect.stringMatching(/application ouverte/i),
+        })
+      )
+    );
+    // Et surtout : ne promet PLUS une synchro de fond que l'app ne tient pas.
+    expect(jest.mocked(Toast.show)).not.toHaveBeenCalledWith(
+      expect.objectContaining({ text2: expect.stringMatching(/dès que le réseau reviendra/i) })
+    );
   });
 });
