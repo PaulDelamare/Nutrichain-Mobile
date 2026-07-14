@@ -1,5 +1,5 @@
 import { apiClient } from './api';
-import { readCache, writeCache } from './cache';
+import { CACHE_TTL_MS, readCache, writeCache } from './cache';
 
 export interface Supplier {
   id: string;
@@ -28,7 +28,9 @@ async function load<T>(key: string, url: string): Promise<T> {
     await writeCache(key, data.data);
     return data.data;
   } catch (error) {
-    const cached = await readCache<T>(key);
+    // Cache en secours, mais PAS à vie : au-delà du TTL, un catalogue d'âge inconnu est traité comme
+    // absent → l'erreur remonte (« catalogue indisponible »), plutôt qu'un produit peut-être retiré.
+    const cached = await readCache<T>(key, CACHE_TTL_MS);
     if (cached) {
       return cached;
     }

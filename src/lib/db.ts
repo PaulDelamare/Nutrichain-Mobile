@@ -33,8 +33,9 @@ export const SCHEMA = `
     created_at      INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS cache (
-    key   TEXT PRIMARY KEY NOT NULL,
-    value TEXT NOT NULL
+    key       TEXT PRIMARY KEY NOT NULL,
+    value     TEXT NOT NULL,
+    cached_at INTEGER NOT NULL DEFAULT 0
   );
 `;
 
@@ -98,6 +99,16 @@ export async function migrate(database: Migratable): Promise<void> {
     "UPDATE operations SET status = 'CONFLICT', error = ? WHERE user_id = '' AND status = 'PENDING'",
     ORPHAN_OPERATION_MESSAGE
   );
+
+  // Cache déjà installé sans horodatage (avant le TTL) : on ajoute `cached_at`. Les entrées
+  // existantes héritent de 0 — donc « très vieilles » : la première lecture avec TTL les ignore et
+  // force un rechargement réseau, plutôt que de servir un catalogue d'âge inconnu.
+  // `table_info` d'une table absente renvoie [] (jamais une table réelle, qui a toujours des
+  // colonnes) : on n'ALTER que si la table existe déjà — `migrate` reste sûr appelé seul, sans SCHEMA.
+  const cacheColumns = await database.getAllAsync<{ name: string }>('PRAGMA table_info(cache)');
+  if (cacheColumns.length > 0 && !cacheColumns.some((column) => column.name === 'cached_at')) {
+    await database.execAsync('ALTER TABLE cache ADD COLUMN cached_at INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 async function open(): Promise<SQLite.SQLiteDatabase> {

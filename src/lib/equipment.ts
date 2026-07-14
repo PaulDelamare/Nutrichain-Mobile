@@ -1,5 +1,5 @@
 import { apiClient } from './api';
-import { readCache, writeCache } from './cache';
+import { CACHE_TTL_MS, readCache, writeCache } from './cache';
 
 export interface Equipment {
   id: string;
@@ -21,7 +21,8 @@ export async function loadEquipment(): Promise<Equipment[]> {
     await writeCache('equipment', data.data);
     return data.data;
   } catch (error) {
-    const cached = await readCache<Equipment[]>('equipment');
+    // Cache borné par le TTL : un matériel supprimé ne doit pas rester scannable indéfiniment.
+    const cached = await readCache<Equipment[]>('equipment', CACHE_TTL_MS);
     if (cached) {
       return cached;
     }
