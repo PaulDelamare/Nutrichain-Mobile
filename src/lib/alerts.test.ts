@@ -70,6 +70,10 @@ describe('loadAlertDecision', () => {
                 niveau_gravite: 'CRITIQUE',
                 id_materiel: 'eq1',
                 created_at: '2026-07-11T22:52:20.000Z',
+                // (issue #57) Le pic de l'incident, en champ structuré. VOLONTAIREMENT différent de
+                // la temp ACTUELLE de l'équipement (7.4) : c'est 9 qu'il faut afficher, pas 7.4.
+                peak_temp: '9',
+                temp_seuil: '4',
               },
             ],
           },
@@ -114,8 +118,9 @@ describe('loadAlertDecision', () => {
 
     expect(decision?.equipmentNom).toBe('Chambre A');
     expect(decision?.lieuNom).toBe('Chambre froide A');
-    // Decimal Prisma (string) → number
-    expect(decision?.tempMesuree).toBe(7.4);
+    // ⚠️ LE cœur de l'issue : la mesure vient du PIC de l'alerte (9), pas de la temp actuelle de
+    // l'équipement (7.4) — jamais renseignée par l'IoT, donc « — » à l'écran.
+    expect(decision?.tempMesuree).toBe(9);
     expect(decision?.tempSeuilMax).toBe(4);
 
     // Les lots viennent de l'API, qui sait lesquels CETTE alerte a isolés — on ne les devine plus.
@@ -135,6 +140,39 @@ describe('loadAlertDecision', () => {
       levable: false,
       motifBlocage: 'CONTROLE_NON_CONFORME',
     });
+  });
+
+  // NE PAS MENTIR : une alerte sans pic (ancienne, avant le champ structuré) laisse la mesure à
+  // « — » — on ne la remplace PAS par la temp actuelle de l'équipement, qui n'est pas l'incident.
+  it('laisse la mesure à null quand l’alerte n’a pas de pic, sans retomber sur la temp équipement', async () => {
+    apiClient.get.mockImplementation((url: string) => {
+      if (url === '/api/organization/alerts') {
+        return Promise.resolve({
+          data: {
+            data: [
+              { id: 'a1', type: 'TEMP_EXCURSION', statut: 'ACTIVE', message: 'x', id_materiel: 'eq1', peak_temp: null, temp_seuil: null },
+            ],
+          },
+        });
+      }
+      if (url === '/api/organization/equipment') {
+        return Promise.resolve({
+          data: { data: [{ id: 'eq1', nom: 'Chambre A', temp_actuelle: '7.4', temp_seuil_max: '4', sensor_id: 'S1', lieu: { nom: 'Chambre froide A' } }] },
+        });
+      }
+      if (url === '/api/alerts/a1/batches') {
+        return Promise.resolve({ data: { data: [] } });
+      }
+      return Promise.reject(new Error(`URL inattendue: ${url}`));
+    });
+
+    const result = await loadAlertDecision('a1');
+    const decision = result.kind === 'active' ? result.decision : null;
+
+    // Pas de pic connu → « — », JAMAIS 7.4 (la temp actuelle).
+    expect(decision?.tempMesuree).toBeNull();
+    // Le seuil, lui, retombe honnêtement sur celui configuré de l'équipement.
+    expect(decision?.tempSeuilMax).toBe(4);
   });
 
   it("ne va JAMAIS chercher les lots dans « tous les lots bloqués de l'organisation »", async () => {

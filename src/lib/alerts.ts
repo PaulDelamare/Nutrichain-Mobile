@@ -10,6 +10,14 @@ export interface Alert {
   // Pour une excursion froid, l'alerte pointe l'ÉQUIPEMENT (pas un lot précis) via ce champ.
   id_materiel?: string | null;
   created_at?: string;
+  /**
+   * Pic de température de l'excursion (°C), Decimal Prisma sérialisé en string. LA donnée sanitaire
+   * de l'écran : de combien la chaîne du froid a rompu. Avant, on lisait `equipment.temp_actuelle`
+   * (jamais renseigné par l'ingestion IoT) → « — » à l'écran. Null hors excursion / avant #57.
+   */
+  peak_temp?: string | null;
+  /** Seuil max dépassé à la détection (°C), Decimal sérialisé en string. */
+  temp_seuil?: string | null;
 }
 
 const COLD_CHAIN_TYPE = 'TEMP_EXCURSION';
@@ -197,8 +205,11 @@ async function buildAlertDecision(alertId: string): Promise<AlertDecisionResult>
       alert,
       equipmentNom: equipment?.nom ?? null,
       lieuNom: equipment?.lieu?.nom ?? null,
-      tempMesuree: toNumber(equipment?.temp_actuelle),
-      tempSeuilMax: toNumber(equipment?.temp_seuil_max),
+      // Le PIC de l'excursion, porté par l'alerte (issue #57) — pas la temp actuelle de l'équipement,
+      // qui n'est pas la mesure de l'incident (et reste vide). Pas de repli : sans pic connu, « — ».
+      tempMesuree: toNumber(alert.peak_temp),
+      // Le seuil de la détection ; à défaut (alerte d'avant le champ), celui configuré de l'équipement.
+      tempSeuilMax: toNumber(alert.temp_seuil) ?? toNumber(equipment?.temp_seuil_max),
       batches,
     },
   };
