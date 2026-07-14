@@ -1,12 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useEffect, useRef } from 'react';
-import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 interface CodeScannerProps {
   visible: boolean;
   title: string;
   hint: string;
+  /**
+   * Une vérification est en cours. La modale doit rester OUVERTE pendant ce temps : la fermer
+   * aussitôt ne montrerait rien à l'opérateur, qui croirait son scan perdu et rescannerait — deux
+   * fois le même lot dans la liste, donc un double prélèvement.
+   */
+  busy?: boolean;
   onClose: () => void;
   onScan: (code: string) => void;
 }
@@ -16,7 +22,7 @@ interface CodeScannerProps {
  * l'opérateur ne peut pas déclarer ce qu'il n'a pas devant lui — ce qu'un menu déroulant,
  * remplissable depuis le bureau, permettrait. Sert au frigo, à la cuve et aux lots.
  */
-export function CodeScanner({ visible, title, hint, onClose, onScan }: CodeScannerProps) {
+export function CodeScanner({ visible, title, hint, busy, onClose, onScan }: CodeScannerProps) {
   const [permission, requestPermission] = useCameraPermissions();
 
   // La caméra émet depuis le processeur natif de frames, sans attendre React : sans verrou
@@ -56,7 +62,14 @@ export function CodeScanner({ visible, title, hint, onClose, onScan }: CodeScann
               facing="back"
               onBarcodeScanned={({ data }) => handleBarcode(data)}
             />
-            <Text style={styles.hint}>{hint}</Text>
+            {busy ? (
+              <View style={styles.busy}>
+                <ActivityIndicator color="#ffffff" />
+                <Text style={styles.hint}>Vérification du lot…</Text>
+              </View>
+            ) : (
+              <Text style={styles.hint}>{hint}</Text>
+            )}
           </>
         ) : (
           <View style={styles.permission}>
@@ -92,6 +105,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     paddingVertical: 20,
   },
+  busy: { alignItems: 'center', gap: 4, paddingVertical: 8 },
   permission: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   permissionBtn: {
     backgroundColor: '#0D9488',

@@ -7,8 +7,8 @@
 //   • Les étiquettes fournisseur → un « element string » GS1 (`01…17…10…`).
 //   • Tout le reste (saisie manuelle, code maison) → on ne l'interprète pas, on le rend tel quel.
 
-/** Longueur max d'un numéro de lot GS1 (AI 10) — et la borne qu'applique l'API. */
-const LOT_NUMBER_MAX_LENGTH = 20;
+/** Longueur max d'un numéro de lot GS1 (AI 10) — et la borne qu'applique l'API (400 au-delà). */
+export const LOT_NUMBER_MAX_LENGTH = 20;
 
 /** AI de longueur fixe qu'on sait lire, et leur longueur de valeur. */
 const FIXED_LENGTH_AIS: Record<string, number> = {
@@ -136,7 +136,12 @@ function parseDigitalLink(code: string): ScannedCode | null {
  * Inventer une coupure enverrait l'opérateur sur la fiche d'un AUTRE lot.
  */
 function parseElementString(code: string): ScannedCode | null {
-  if (!/^\d{2}/.test(code)) {
+  // ⚠️ On exige que la chaîne DÉBUTE par un AI de longueur FIXE (00, 01, 17). Un code qui commence
+  // par « 10 » serait sinon lu comme « AI 10 » : le lot « 10ABC » deviendrait « ABC », et on
+  // engagerait un AUTRE lot. Or une vraie étiquette GS1 commence par un SSCC ou un GTIN, jamais par
+  // un numéro de lot nu — tandis qu'un numéro de lot commençant par « 10 » est parfaitement banal.
+  // Face à une ambiguïté indécidable, on refuse d'interpréter plutôt que de deviner.
+  if (!/^(00|01|17)/.test(code)) {
     return null;
   }
 
@@ -193,6 +198,34 @@ function parseElementString(code: string): ScannedCode | null {
   }
 
   return decodedSomething ? result : null;
+}
+
+/**
+ * Les identifiants sous lesquels un code scanné peut désigner un lot — **le code BRUT d'abord**,
+ * son interprétation ensuite.
+ *
+ * ⚠️ Cet ordre est une garde sanitaire, pas un détail. Le décodeur réécrit tout code commençant par
+ * un identifiant GS1 (`00`/`01`/`10`/`17`) : un lot fournisseur nommé « 10ABC » y est lu « ABC ».
+ * Chercher d'abord l'interprétation ferait engager un AUTRE lot — sans erreur, sans message :
+ * mauvaise marchandise en production, mauvais parent dans la traçabilité.
+ *
+ * Tous ceux qui résolvent un lot (local ou serveur) doivent partir de CETTE liste, dans CET ordre.
+ */
+export function scanCandidates(code: string): string[] {
+  const raw = code.trim();
+  const decoded = parseScannedCode(code).lotNumber;
+
+  return [...new Set([raw, decoded].filter((value): value is string => Boolean(value)))];
+}
+
+/**
+ * Un SSCC identifie un COLIS, pas un lot : il n'y a rien à chercher. Sans ce test, chaque scan de
+ * colis partirait interroger le serveur — et, hors réseau, l'opérateur lirait « ce lot n'a pas pu
+ * être vérifié » sur un code qui ne peut structurellement PAS être un lot.
+ */
+export function isPackageCode(code: string): boolean {
+  const parsed = parseScannedCode(code);
+  return parsed.sscc !== null && parsed.lotNumber === null;
 }
 
 export function parseScannedCode(code: string): ScannedCode {

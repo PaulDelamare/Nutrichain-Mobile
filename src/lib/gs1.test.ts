@@ -78,6 +78,19 @@ describe('parseScannedCode', () => {
       expect(code.lotNumber).toBe('ABC17261231');
     });
 
+    // ⚠️ Une vraie étiquette GS1 commence par un SSCC ou un GTIN, JAMAIS par un numéro de lot nu.
+    // Un code qui commence par « 10 » est donc bien plus probablement un numéro de lot ordinaire —
+    // et le lire comme « AI 10 » transformerait le lot « 10ABC » en « ABC », c'est-à-dire ferait
+    // engager UN AUTRE LOT. Face à une ambiguïté indécidable, on refuse d'interpréter.
+    it.each([
+      ['10ABC'],
+      ['10-2026-045'],
+      ['17ABC'],
+      ['00ABC'],
+    ])('ne prend pas « %s » pour une étiquette GS1 : c’est un numéro de lot', (code) => {
+      expect(parseScannedCode(code).lotNumber).toBe(code);
+    });
+
     it('décode le SSCC (AI 00) — c’est un colis, pas un lot', () => {
       const code = parseScannedCode('00376112345678901234');
 

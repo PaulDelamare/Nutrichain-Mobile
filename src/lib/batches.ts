@@ -1,7 +1,7 @@
 import { apiClient } from './api';
 import { readCache, writeCache } from './cache';
 import { ApiError } from './errors';
-import { parseScannedCode } from './gs1';
+import { isPackageCode, LOT_NUMBER_MAX_LENGTH, scanCandidates } from './gs1';
 
 // ── Le catalogue des lots : ce qu'on scanne devant la cuve ou le camion ───────────────────────
 
@@ -82,23 +82,15 @@ export async function loadBatches(): Promise<Batch[]> {
  * « Lot inconnu ». Le décodage vit ICI, pas chez les appelants — le prochain écran qui scanne un
  * lot l'oublierait.
  *
- * ⚠️ Le code BRUT est essayé en PREMIER, le décodé ensuite. Le brut est la vérité : c'est la clé
- * de nos données. Le décodage n'est qu'une interprétation, et elle réécrit tout code commençant par
- * un identifiant GS1 (`00`/`01`/`10`/`17`) — un lot fournisseur nommé « 10ABC » serait lu « ABC »,
- * et l'app engagerait un AUTRE lot, sans la moindre erreur. Mauvaise marchandise en production,
- * mauvais parent dans la traçabilité.
+ * ⚠️ Le code BRUT est essayé en PREMIER, le décodé ensuite : le brut est la clé de nos données, le
+ * décodage n'est qu'une interprétation.
  *
- * ⚠️ Portée : `batches` ne contient que les 100 lots les plus récents (l'API plafonne). Un lot plus
- * ancien est donc annoncé « inconnu » alors qu'il existe — voir RESTE_A_FAIRE. L'onglet Scan, lui,
- * interroge le serveur (`resolveBatch`) et le trouve.
+ * ⚠️ Portée : `batches` ne contient que les 100 lots les plus RÉCENTS (l'API plafonne). Cette
+ * fonction ne peut donc PAS conclure « ce lot n'existe pas » — seul `lookupBatch`, qui interroge le
+ * serveur en repli, en a le droit.
  */
 export function findBatchByCode(code: string, batches: Batch[]): Batch | undefined {
-  const raw = code.trim();
-  const decoded = parseScannedCode(code).lotNumber;
-
-  const needles = [...new Set([raw, decoded].filter((value): value is string => Boolean(value)))];
-
-  for (const needle of needles.map((value) => value.toLowerCase())) {
+  for (const needle of scanCandidates(code).map((value) => value.toLowerCase())) {
     const found = batches.find(
       (batch) => batch.lot_number.toLowerCase() === needle || batch.id.toLowerCase() === needle
     );
@@ -172,27 +164,93 @@ export async function loadBatch(id: string): Promise<BatchDetail | null> {
   }
 }
 
+// ── Retrouver le lot qu'on vient de scanner ───────────────────────────────────────────────────
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function toBatch(b: BatchApi): Batch {
+  return {
+    id: b.id,
+    lot_number: b.lot_number,
+    statut: b.statut,
+    quantite_actuelle: b.quantite_actuelle,
+    unite_code: b.unite_code,
+    date_peremption: b.date_peremption,
+    produit: { nom: b.produit?.nom ?? 'Produit inconnu' },
+  };
+}
+
 /**
- * Le lot qu'on vient de scanner, résolu par le SERVEUR (`GET /api/logistics/batches/resolve`).
+ * Les trois issues d'un scan — et elles sont bien TROIS.
  *
- * Volontairement PAS résolu localement contre `loadBatches()` : le catalogue est plafonné à 100
- * lots côté serveur, donc au-delà un lot bien réel serait déclaré « inconnu » — et l'opérateur
- * réceptionnerait une seconde fois une palette déjà en stock.
- *
- * ⚠️ `null` signifie « ce lot n'existe pas » (404), et RIEN D'AUTRE. Avaler une panne réseau dans
- * le même `null` recréerait exactement ce doublon : deux secondes sans réseau, et un lot en stock
- * repartirait en réception. Toute autre erreur est donc relancée à l'appelant, qui doit le DIRE.
+ * Confondre « ce lot n'existe pas » et « je n'ai pas pu le demander » est la faute qui revient sans
+ * cesse ici : elle fait annoncer « Lot inconnu » sur une marchandise bien réelle, et pousse
+ * l'opérateur à la resaisir.
  */
-export async function resolveBatch(lotNumber: string): Promise<BatchDetail | null> {
+export type BatchLookup =
+  | { kind: 'found'; batch: Batch }
+  | { kind: 'unknown' }
+  | { kind: 'unverifiable'; error: unknown };
+
+async function askServer(path: string, params?: Record<string, string>): Promise<Batch | null> {
   try {
-    const { data } = await apiClient.get<{ data: BatchApi }>('/api/logistics/batches/resolve', {
-      params: { lot_number: lotNumber },
-    });
-    return toBatchDetail(data.data);
+    const { data } = await apiClient.get<{ data: BatchApi }>(path, params ? { params } : undefined);
+    return toBatch(data.data);
   } catch (error: unknown) {
+    // 404 = « ce lot n'existe pas ». TOUT le reste (réseau, 401, 500) est une incertitude, pas une
+    // réponse : l'avaler dans le même `null` ferait mentir tous les écrans d'un coup.
     if (error instanceof ApiError && error.status === 404) {
       return null;
     }
     throw error;
   }
+}
+
+/**
+ * Retrouve le lot désigné par un code scanné. **Le seul point de résolution** : l'onglet Scan, la
+ * transformation et l'expédition passent tous par ici, donc une même étiquette donne partout la
+ * même réponse.
+ *
+ * 1. La liste déjà chargée, si on en a une : instantané, et suffisant dans l'immense majorité des cas.
+ * 2. Sinon le serveur. Indispensable : `GET /traceability/batches` est plafonné à 100 lots, donc un
+ *    lot plus ancien (un ingrédient à longue conservation) était annoncé « inconnu » devant le
+ *    camion alors qu'il est en stock, étiqueté par nous.
+ */
+export async function lookupBatch(code: string, batches: Batch[] = []): Promise<BatchLookup> {
+  const local = findBatchByCode(code, batches);
+  if (local) {
+    return { kind: 'found', batch: local };
+  }
+
+  // Un SSCC désigne un colis : il n'y a aucun lot à chercher, et l'annoncer « non vérifié » hors
+  // réseau serait un faux problème.
+  if (isPackageCode(code)) {
+    return { kind: 'unknown' };
+  }
+
+  // Une panne sur UN candidat ne doit pas enterrer le suivant : sinon une étiquette dont le code
+  // brut part en 500 n'essaierait jamais le numéro de lot décodé — qui, lui, aurait été trouvé.
+  let failure: unknown;
+
+  for (const candidate of scanCandidates(code)) {
+    try {
+      const batch = UUID.test(candidate)
+        ? // Un identifiant de lot n'est pas un numéro de lot : l'endpoint de résolution le
+          // refuserait (36 caractères). Il a sa propre route — et `findBatchByCode` accepte les
+          // deux, donc le serveur doit accepter les deux aussi.
+          await askServer(`/api/logistics/batches/${candidate}`)
+        : candidate.length <= LOT_NUMBER_MAX_LENGTH
+          ? await askServer('/api/logistics/batches/resolve', { lot_number: candidate })
+          : null;
+
+      if (batch) {
+        return { kind: 'found', batch };
+      }
+    } catch (error: unknown) {
+      failure = error;
+    }
+  }
+
+  // Aucun candidat n'a abouti. Si l'un d'eux a échoué sans réponse, on ne SAIT PAS : le dire.
+  return failure ? { kind: 'unverifiable', error: failure } : { kind: 'unknown' };
 }
