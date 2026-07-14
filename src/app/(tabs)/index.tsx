@@ -13,7 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useCurrentUser } from '@/hooks/use-current-user';
-import { useOnlineStatus } from '@/hooks/use-online-status';
+import { useOnlineStatus, type OnlineStatus } from '@/hooks/use-online-status';
 import { loadActiveColdAlerts, type ColdAlerts } from '@/lib/alerts';
 import { formatRole } from '@/lib/roles';
 import { countByStatus } from '@/lib/sync/queue';
@@ -22,6 +22,13 @@ import type { OperationStatus } from '@/lib/sync/types';
 import { BRAND, HEADER_GRADIENT } from '@/lib/theme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+/** « Vérification… » et non « En ligne » : au démarrage, on ne sait pas ENCORE si le serveur répond. */
+const ONLINE_LABEL: Record<OnlineStatus, string> = {
+  online: 'En ligne',
+  offline: 'Hors ligne',
+  checking: 'Vérification…',
+};
 
 /** On n'a pas pu savoir. Ce n'est PAS zéro. */
 const UNKNOWN = '—';
@@ -124,8 +131,16 @@ export default function HomeScreen() {
           </View>
 
           <View style={styles.onlineBadge}>
-            <View style={[styles.onlineDot, !online && styles.offlineDot]} />
-            <Text style={styles.onlineText}>{online ? 'En ligne' : 'Hors ligne'}</Text>
+            {/* Tant qu'on n'a pas interrogé le serveur, on ne prétend RIEN : « En ligne » par
+                défaut, c'est affirmer exactement ce qu'on ignore. */}
+            <View
+              style={[
+                styles.onlineDot,
+                online === 'offline' && styles.offlineDot,
+                online === 'checking' && styles.checkingDot,
+              ]}
+            />
+            <Text style={styles.onlineText}>{ONLINE_LABEL[online]}</Text>
           </View>
         </View>
 
@@ -306,6 +321,9 @@ const styles = StyleSheet.create({
   },
   offlineDot: {
     backgroundColor: '#FBBF24',
+  },
+  checkingDot: {
+    backgroundColor: 'rgba(255,255,255,0.5)',
   },
   onlineText: {
     fontSize: 12,

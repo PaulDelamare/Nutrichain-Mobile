@@ -1,32 +1,60 @@
 import * as Network from 'expo-network';
 import { useEffect, useState } from 'react';
 
+import { apiClient } from '@/lib/api';
+
 /**
- * État réseau réel. L'accueil affichait « En ligne » en dur : sur une application dont
- * l'intérêt est justement de fonctionner hors réseau, afficher un état faux est le pire
- * des mensonges — l'opérateur croit ses scans partis alors qu'ils dorment en file.
+ * Ce que l'application peut honnêtement dire de sa connectivité.
+ *
+ * ⚠️ `expo-network` s'appuie sur `navigator.onLine` **sur le web** — qui vaut `true` dès qu'une
+ * interface réseau est associée, y compris sur un Wi-Fi sans Internet, derrière un portail captif ou
+ * face à une API éteinte. Le badge annonçait donc « En ligne » à un opérateur dont RIEN ne partait.
+ * Et la démo se fait dans un navigateur.
+ *
+ * La question qui compte pour cette application n'est pas « ai-je du réseau ? » mais
+ * **« le serveur me répond-il ? »**. On la pose donc au serveur, au lieu de la déduire.
+ *
+ * Le troisième état n'est pas un luxe : au démarrage, on ne sait pas ENCORE. Afficher « En ligne »
+ * par défaut — ce que faisait ce hook — c'est affirmer précisément ce qu'on ignore.
  */
-export function useOnlineStatus(): boolean {
-  const [online, setOnline] = useState(true);
+export type OnlineStatus = 'online' | 'offline' | 'checking';
+
+/** Le serveur est injoignable bien avant les 30 s du client HTTP : l'opérateur n'attend pas. */
+const PROBE_TIMEOUT_MS = 5_000;
+
+/** Route publique : elle ne dit rien d'autre que « je réponds ». */
+const PROBE_URL = '/api/health';
+
+export function useOnlineStatus(): OnlineStatus {
+  const [status, setStatus] = useState<OnlineStatus>('checking');
 
   useEffect(() => {
-    let mounted = true;
+    let alive = true;
 
-    Network.getNetworkStateAsync()
-      .then((state) => {
-        if (mounted) setOnline(state.isInternetReachable === true);
-      })
-      .catch(() => undefined);
+    async function probe(): Promise<void> {
+      try {
+        await apiClient.get(PROBE_URL, { timeout: PROBE_TIMEOUT_MS });
+        if (alive) setStatus('online');
+      } catch {
+        // Réseau coupé, DNS mort, portail captif, serveur éteint : pour l'opérateur, c'est la même
+        // chose — ses scans ne partiront pas.
+        if (alive) setStatus('offline');
+      }
+    }
 
-    const subscription = Network.addNetworkStateListener(({ isInternetReachable }) => {
-      if (mounted) setOnline(isInternetReachable === true);
+    void probe();
+
+    // L'état de l'interface reste un bon DÉCLENCHEUR — il change quand on entre ou sort d'une zone
+    // couverte. Il ne fait simplement pas foi : on s'en sert pour re-poser la question au serveur.
+    const subscription = Network.addNetworkStateListener(() => {
+      void probe();
     });
 
     return () => {
-      mounted = false;
+      alive = false;
       subscription.remove();
     };
   }, []);
 
-  return online;
+  return status;
 }

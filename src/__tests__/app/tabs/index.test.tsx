@@ -30,15 +30,26 @@ describe('écran d’accueil', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedUser.mockReturnValue({ user: null, loading: false });
-    mockedOnline.mockReturnValue(true);
+    mockedOnline.mockReturnValue('online');
     mockedAlerts.mockResolvedValue({ kind: 'ok', alerts: [] });
     counts();
+  });
+
+  it('ne prétend PAS « En ligne » tant qu’il n’a pas interrogé le serveur', async () => {
+    // Le badge démarrait à « En ligne » par défaut : il affirmait exactement ce qu'il ignorait.
+    mockedOnline.mockReturnValue('checking');
+
+    render(<HomeScreen />);
+
+    await waitFor(() => expect(screen.getByText('Vérification…')).toBeTruthy());
+    expect(screen.queryByText('En ligne')).toBeNull();
+    expect(screen.queryByText('Hors ligne')).toBeNull();
   });
 
   it('annonce l’état réseau réel', async () => {
     // Le badge était codé en dur : hors réseau, l'app affichait quand même « En ligne »,
     // et l'opérateur croyait ses scans partis alors qu'ils dormaient en file.
-    mockedOnline.mockReturnValue(false);
+    mockedOnline.mockReturnValue('offline');
 
     render(<HomeScreen />);
 
