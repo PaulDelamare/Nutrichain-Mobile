@@ -16,7 +16,7 @@ jest.mock('expo-router', () => ({ router: { replace: jest.fn() } }));
 
 type Route = { status: number; data: unknown };
 
-/** Chaque URL répond indépendamment : /api/me et /api/organization/members ont des sorts distincts. */
+/** Chaque URL répond indépendamment. */
 function routes(byUrl: Record<string, Route>): void {
   const adapter: AxiosAdapter = async (config: InternalAxiosRequestConfig) => {
     const route = byUrl[config.url ?? ''];
@@ -33,15 +33,17 @@ function routes(byUrl: Record<string, Route>): void {
   apiClient.defaults.adapter = adapter;
 }
 
-const ME = {
+const me = (role?: string | null) => ({
   status: 200,
   data: {
     data: {
       user: { id: 'u1', name: 'Paul Delamare', email: 'paul@nutrichain.local' },
       activeOrgId: 'org-1',
+      ...(role === undefined ? {} : { role }),
     },
   },
-};
+});
+const ME = me('operator');
 
 describe('fetchCurrentUser', () => {
   it('renvoie l’utilisateur et son organisation active', async () => {
@@ -54,38 +56,25 @@ describe('fetchCurrentUser', () => {
     expect(user.organizationId).toBe('org-1');
   });
 
-  it('résout le rôle depuis les membres de l’organisation', async () => {
-    // /api/me ne porte pas le rôle : il faut le retrouver parmi les membres de l'org.
-    routes({
-      '/api/me': ME,
-      '/api/organization/members': {
-        status: 200,
-        data: {
-          data: [
-            { userId: 'autre', role: 'admin' },
-            { userId: 'u1', role: 'logistics_operator' },
-          ],
-        },
-      },
-    });
+  // ⚠️ Le rôle vient de `/api/me`, et de nulle part ailleurs. Il était résolu via
+  // `GET /organization/members`, route réservée aux `owner`/`admin` : pour un `operator`, un
+  // `quality` ou un `viewer` — les utilisateurs mêmes de cette app — c'était un 403 avalé, donc un
+  // rôle toujours `null`. Les tests précédents encodaient ce contrat périmé (« /api/me ne porte pas
+  // le rôle ») : ils validaient le bug.
+  it('lit le rôle sur /api/me — et n’interroge AUCUNE route d’administration', async () => {
+    routes({ '/api/me': me('operator') });
 
     const user = await fetchCurrentUser();
 
-    expect(user.role).toBe('logistics_operator');
+    expect(user.role).toBe('operator');
+    // `routes` jette sur toute URL non stubée : si `/organization/members` était encore appelée,
+    // ce test échouerait. C'est la garde.
   });
 
-  it('reste utilisable quand le rôle est inaccessible', async () => {
-    // Un opérateur peut ne pas avoir le droit de lister les membres : l'écran doit
-    // quand même afficher son identité plutôt que d'échouer entièrement.
-    routes({
-      '/api/me': ME,
-      '/api/organization/members': { status: 403, data: { status: 403, error: [] } },
-    });
+  it('n’invente pas de rôle quand l’API n’en renvoie pas', async () => {
+    routes({ '/api/me': me(undefined) });
 
-    const user = await fetchCurrentUser();
-
-    expect(user.name).toBe('Paul Delamare');
-    expect(user.role).toBeNull();
+    expect((await fetchCurrentUser()).role).toBeNull();
   });
 
   it('propage l’échec quand l’identité elle-même est refusée', async () => {

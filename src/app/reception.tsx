@@ -114,16 +114,29 @@ export default function ReceptionScreen() {
   const productUnmatched = scanned.gtin !== null && products.length > 0 && gtinProduct === null;
 
   useEffect(() => {
-    // Le catalogue est indispensable à la saisie ; l'emplacement ne l'est pas. Les charger
-    // ensemble ferait échouer TOUTE la réception dès que la liste des matériels manque du
-    // cache — ce qui est le cas au premier lancement hors réseau après une mise à jour.
-    Promise.all([loadSuppliers(), loadProducts()])
-      .then(([loadedSuppliers, loadedProducts]) => {
-        setSuppliers(loadedSuppliers);
-        setProducts(loadedProducts);
-      })
-      .catch((error: unknown) => {
-        toastError('Catalogue indisponible', error);
+    // ⚠️ `allSettled`, jamais `all`. Un `Promise.all` fait rejeter la promesse ENTIÈRE dès qu'un
+    // seul appel échoue : un 403 sur les fournisseurs (le cas d'un `operator`, à qui l'API réserve
+    // cette route) emportait les produits, pourtant revenus en 200. L'opérateur voyait « Catalogue
+    // indisponible » et DEUX listes vides — il ne pouvait plus rien réceptionner.
+    //
+    // Un échec sur une liste ne doit pas emporter celles qui ont répondu. La transformation et
+    // l'expédition l'avaient déjà compris ; la réception, non.
+    void Promise.allSettled([loadSuppliers(), loadProducts()])
+      .then(([suppliersResult, productsResult]) => {
+        if (suppliersResult.status === 'fulfilled') setSuppliers(suppliersResult.value);
+        if (productsResult.status === 'fulfilled') setProducts(productsResult.value);
+
+        // On DIT ce qui manque, précisément — « catalogue indisponible » ne dit ni quoi, ni pourquoi.
+        const manquants = [
+          suppliersResult.status === 'rejected' ? 'fournisseurs' : null,
+          productsResult.status === 'rejected' ? 'produits' : null,
+        ].filter(Boolean);
+
+        if (manquants.length > 0) {
+          const cause =
+            suppliersResult.status === 'rejected' ? suppliersResult.reason : productsResult.status === 'rejected' ? productsResult.reason : null;
+          toastError(`Liste des ${manquants.join(' et ')} indisponible`, cause);
+        }
       })
       .finally(() => setLoading(false));
 
@@ -295,6 +308,15 @@ export default function ReceptionScreen() {
               selected={supplierId}
               onSelect={setSupplierId}
             />
+
+            {/* Un sélecteur vide est MUET : l'opérateur voit un bouton gris sans savoir pourquoi.
+                Sans fournisseur, la réception ne peut simplement pas être enregistrée — on le dit. */}
+            {suppliers.length === 0 && (
+              <Text style={styles.missing}>
+                Aucun fournisseur accessible. La réception ne peut pas être enregistrée sans
+                fournisseur — vérifiez votre connexion, ou vos droits d’accès à cette liste.
+              </Text>
+            )}
 
             <View style={styles.field}>
               <OptionPicker
@@ -518,6 +540,7 @@ const styles = StyleSheet.create({
   locationName: { fontSize: 14, fontWeight: '600', color: '#111827' },
   locationPlace: { fontSize: 12, color: '#6B7280' },
   warning: { fontSize: 12, color: '#B45309' },
+  missing: { fontSize: 12, color: '#B45309', lineHeight: 17, marginTop: -8, marginBottom: 4 },
   // Donnée lue sur l'étiquette (verte = confirmée), pas saisie à la main ni supposée.
   dlcInfo: { fontSize: 12, color: '#047857', fontWeight: '600' },
   // Conséquence sanitaire lourde : fond ambré pour qu'elle ne se lise pas comme une note anodine.
