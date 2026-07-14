@@ -40,8 +40,19 @@ const decision: AlertDecision = {
   tempMesuree: 12.4,
   tempSeuilMax: 4,
   batches: [
-    { id: 'b-1', lotNumber: 'LOT-001', produitNom: 'Lait cru', quantite: 200, uniteCode: 'L' },
+    { id: 'b-1', lotNumber: 'LOT-001', produitNom: 'Lait cru', quantite: 200, uniteCode: 'L', levable: true, motifBlocage: null },
   ],
+};
+
+/** Isolé par le froid, mais déclaré non conforme DEPUIS : la levée ne doit pas le rendre au stock. */
+const LOT_CONDAMNE = {
+  id: 'b-2',
+  lotNumber: 'LOT-002',
+  produitNom: 'Crème',
+  quantite: 30,
+  uniteCode: 'L',
+  levable: false,
+  motifBlocage: 'CONTROLE_NON_CONFORME' as const,
 };
 
 /** Le libellé de confirmation vit dans la modale, rendue en dernier. */
@@ -246,5 +257,40 @@ describe('écran de décision sur une alerte froid', () => {
     expect(mockedToast.show).not.toHaveBeenCalledWith(
       expect.objectContaining({ text1: 'Quarantaine maintenue' })
     );
+  });
+
+  // ⚠️ Un lot déclaré non conforme APRÈS son isolement est isolé par le froid ET impropre. L'écran
+  // doit le MONTRER — pas le compter dans « seront remis en stock », et surtout pas le relâcher.
+  it('MONTRE les lots non conformes, et ne prétend pas les remettre en stock', async () => {
+    mockedLoad.mockResolvedValue({
+      kind: 'active',
+      decision: { ...decision, batches: [...decision.batches, LOT_CONDAMNE] },
+    });
+
+    await ouvrirLEcran();
+
+    expect(screen.getByText('NON CONCERNÉS PAR LA LEVÉE')).toBeTruthy();
+    expect(screen.getByText(/LOT-002/)).toBeTruthy();
+
+    fireEvent.changeText(screen.getByPlaceholderText(/isolation immédiate/i), 'frigo réparé');
+    fireEvent.press(screen.getByText('Enregistrer sans isolation'));
+
+    // Le décompte de la confirmation ne compte QUE les lots levables : 1, pas 2.
+    await waitFor(() => expect(screen.getByText(/1 lot\(s\) seront remis en stock/)).toBeTruthy());
+    expect(screen.getByText(/1 lot\(s\) resteront isolés/)).toBeTruthy();
+  });
+
+  it('ne propose pas de lever quand TOUS les lots retenus sont non conformes', async () => {
+    mockedLoad.mockResolvedValue({
+      kind: 'active',
+      decision: { ...decision, batches: [LOT_CONDAMNE] },
+    });
+
+    render(<AlertDecisionScreen />);
+    await waitFor(() => expect(screen.getByText('Maintenir la quarantaine')).toBeTruthy());
+
+    // Le bouton relâcherait 0 lot, clôturerait l'alerte, et annoncerait « Lot(s) remis en stock ».
+    expect(screen.queryByText('Enregistrer sans isolation')).toBeNull();
+    expect(screen.getByText(/tous sont non conformes/i)).toBeTruthy();
   });
 });

@@ -127,7 +127,14 @@ export default function AlertDecisionScreen() {
       const outcome = await releaseAndResolve(decision.alert.id, decision.batches, note.trim());
 
       if (outcome.alertResolved) {
-        done('Quarantaine levée', `${outcome.released.length} lot(s) remis en stock ; alerte clôturée.`);
+        // Les lots condamnés restent isolés : le dire, sinon l'opérateur croit avoir tout rendu.
+        done(
+          'Quarantaine levée',
+          `${outcome.released.length} lot(s) remis en stock ; alerte clôturée.` +
+            (outcome.stillBlocked.length > 0
+              ? ` ${outcome.stillBlocked.length} lot(s) restent isolés (non conformes).`
+              : '')
+        );
         return;
       }
 
@@ -234,9 +241,13 @@ export default function AlertDecisionScreen() {
   const active = result.decision;
   const { alert, batches } = active;
   const primaryBatch = batches[0];
+  // Les lots que la levée peut réellement rendre au stock. Un lot déclaré non conforme APRÈS son
+  // isolement est isolé par le froid ET impropre : réparer le frigo ne le rend pas consommable.
+  const levables = batches.filter((b) => b.levable);
+  const condamnes = batches.filter((b) => !b.levable);
   // Sans lot à relâcher, « Lever la quarantaine » boucle sur RIEN : elle ne relâche rien, clôture
   // l'alerte, et annonce « Lot(s) remis en stock ». Le bouton ne doit pas exister.
-  const canRelease = batches.length > 0;
+  const canRelease = levables.length > 0;
 
   return (
     <View style={styles.screen}>
@@ -293,10 +304,30 @@ export default function AlertDecisionScreen() {
           />
           {batches.length > 1 ? (
             <Text style={styles.moreBatches}>
-              +{batches.length - 1} autre(s) lot(s) isolé(s) sur cet équipement
+              +{batches.length - 1} autre(s) lot(s) isolé(s) par cette alerte
             </Text>
           ) : null}
         </View>
+
+        {/* ── Lots que la levée ne rendra PAS au stock ──────────────── */}
+        {condamnes.length > 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.cardLabel}>NON CONCERNÉS PAR LA LEVÉE</Text>
+            <Text style={styles.condamnesIntro}>
+              Ces lots ont été déclarés{' '}
+              <Text style={styles.notFoundStrong}>non conformes après leur isolement</Text>. Réparer
+              la chambre froide ne les rend pas consommables : ils resteront isolés.
+            </Text>
+            {condamnes.map((batch) => (
+              <View key={batch.id} style={styles.condamneRow}>
+                <Ionicons name="close-circle" size={16} color={DANGER} />
+                <Text style={styles.condamneText}>
+                  {batch.lotNumber} — {batch.produitNom}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
 
         {/* ── Carte action ───────────────────────────────────────── */}
         <View style={styles.card}>
@@ -335,11 +366,12 @@ export default function AlertDecisionScreen() {
               <Text style={styles.btnSecondaryText}>Enregistrer sans isolation</Text>
             </TouchableOpacity>
           ) : (
-            // Aucun lot n'est isolé sur cet équipement : il n'y a RIEN à relâcher. Le bouton
-            // annoncerait « 0 lot(s) seront remis en stock », ne relâcherait rien, et clôturerait
-            // quand même l'alerte en disant « Lot(s) remis en stock ».
+            // Aucun lot LEVABLE : le bouton annoncerait « 0 lot(s) seront remis en stock », ne
+            // relâcherait rien, et clôturerait quand même l'alerte en disant « Lot(s) remis en stock ».
             <Text style={styles.noBatches}>
-              Aucun lot isolé sur cet équipement : il n’y a rien à remettre en stock.
+              {condamnes.length > 0
+                ? 'Aucun lot ne peut être remis en stock : tous sont non conformes. Clôturez l’incident en maintenant la quarantaine.'
+                : 'Aucun lot isolé par cette alerte : il n’y a rien à remettre en stock.'}
             </Text>
           )}
 
@@ -359,7 +391,12 @@ export default function AlertDecisionScreen() {
       <ConfirmDialog
         visible={confirming}
         title="Lever la quarantaine ?"
-        message={`${active.batches.length} lot(s) seront remis en stock. Décision tracée dans l’audit.`}
+        message={
+          `${levables.length} lot(s) seront remis en stock. Décision tracée dans l’audit.` +
+          (condamnes.length > 0
+            ? `\n\n${condamnes.length} lot(s) resteront isolés : contrôle non conforme.`
+            : '')
+        }
         confirmLabel="Lever"
         destructive
         onCancel={() => setConfirming(false)}
@@ -445,6 +482,9 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: 14, color: '#6B7280' },
   rowValue: { fontSize: 15, fontWeight: '700', color: '#111827', flexShrink: 1, textAlign: 'right' },
   moreBatches: { fontSize: 12, color: '#92400E', marginTop: 8 },
+  condamnesIntro: { fontSize: 13, color: '#6B7280', lineHeight: 19, marginBottom: 10 },
+  condamneRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
+  condamneText: { flex: 1, fontSize: 14, fontWeight: '600', color: '#374151' },
 
   /* ── Action ──────────────────────────────────────────────── */
   fieldLabel: { fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 8 },
