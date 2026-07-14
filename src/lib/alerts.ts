@@ -14,17 +14,36 @@ export interface Alert {
 const COLD_CHAIN_TYPE = 'TEMP_EXCURSION';
 
 /**
- * L'API renvoie toutes les alertes de l'organisation, sans filtre possible :
- * le tri est donc à notre charge. Hors réseau, l'accueil reste utilisable.
+ * Les alertes froid actives — ou l'aveu qu'on n'a pas pu les demander.
+ *
+ * ⚠️ Pas de cache, et pas de troisième état. Une alerte froid n'est pas une donnée de référence
+ * comme le catalogue : c'est un **état sanitaire vivant**, produit par les capteurs. Un cache ne
+ * pourrait JAMAIS montrer l'alerte née pendant la coupure — c'est-à-dire exactement celle qui
+ * compte — et il ne saurait qu'en ressortir une déjà résolue. On importerait le mensonge inverse
+ * sans rien gagner pour la saisie hors ligne.
+ *
+ * Cette fonction ne REJETTE jamais : `unverifiable` EST le canal d'erreur. L'appelant doit le DIRE.
  */
-export async function loadActiveColdAlerts(): Promise<Alert[]> {
+export type ColdAlerts =
+  | { kind: 'ok'; alerts: Alert[] }
+  | { kind: 'unverifiable'; error: unknown };
+
+export async function loadActiveColdAlerts(): Promise<ColdAlerts> {
   try {
+    // L'API renvoie toutes les alertes de l'organisation, sans filtre possible : le tri est à nous.
     const { data } = await apiClient.get<{ data: Alert[] }>('/api/organization/alerts');
-    return data.data.filter(
-      (alert) => alert.type === COLD_CHAIN_TYPE && alert.statut === 'ACTIVE'
-    );
-  } catch {
-    return [];
+
+    return {
+      kind: 'ok',
+      alerts: data.data.filter(
+        (alert) => alert.type === COLD_CHAIN_TYPE && alert.statut === 'ACTIVE'
+      ),
+    };
+  } catch (error: unknown) {
+    // Renvoyer `[]` — ce que faisait ce code — faisait afficher « ALERTES FROID : 0 » à l'accueil
+    // sur une simple panne réseau. La seule information sanitaire de l'écran, et elle annonçait
+    // « tout va bien » pendant une excursion thermique.
+    return { kind: 'unverifiable', error };
   }
 }
 

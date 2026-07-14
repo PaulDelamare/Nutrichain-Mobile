@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { useOnlineStatus } from '@/hooks/use-online-status';
-import { loadActiveColdAlerts, type Alert } from '@/lib/alerts';
+import { loadActiveColdAlerts, type ColdAlerts } from '@/lib/alerts';
 import { formatRole } from '@/lib/roles';
 import { countByStatus } from '@/lib/sync/queue';
 import type { OperationStatus } from '@/lib/sync/types';
@@ -22,6 +22,16 @@ import type { OperationStatus } from '@/lib/sync/types';
 import { BRAND, HEADER_GRADIENT } from '@/lib/theme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+/** On n'a pas pu savoir. Ce n'est PAS zéro. */
+const UNKNOWN = '—';
+/** On ne sait pas ENCORE. Ce n'est ni zéro, ni un échec. */
+const LOADING = '…';
+
+/** Les compteurs de la file locale — ou l'aveu que la base ne répond pas. */
+type QueueCounts =
+  | { kind: 'ok'; counts: Record<OperationStatus, number> }
+  | { kind: 'unverifiable' };
 
 interface StatCardProps {
   label: string;
@@ -62,24 +72,34 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useCurrentUser();
   const online = useOnlineStatus();
-  const [counts, setCounts] = useState<Record<OperationStatus, number>>({
-    PENDING: 0,
-    SYNCED: 0,
-    CONFLICT: 0,
-    REJECTED: 0,
-  });
-  const [coldAlerts, setColdAlerts] = useState<Alert[]>([]);
+  // ⚠️ TROIS états, jamais deux. « Je charge » et « je n'ai pas pu » ne sont PAS la même chose :
+  // les confondre ferait clignoter un message d'échec à chaque ouverture de l'app — un mensonge
+  // à l'envers. Et `0` n'est aucun des deux : un compteur initialisé à zéro affiche
+  // « ALERTES FROID : 0 » et « Tout est à jour » avant même d'avoir rien demandé.
+  const [counts, setCounts] = useState<QueueCounts | null>(null);
+  const [cold, setCold] = useState<ColdAlerts | null>(null);
 
   useFocusEffect(
     useCallback(() => {
-      // Un échec SQLite ne doit pas faire tomber l'accueil en rejet non géré : l'écran
-      // reste sur ses derniers compteurs plutôt que de disparaître.
-      countByStatus().then(setCounts).catch(() => undefined);
-      loadActiveColdAlerts().then(setColdAlerts);
+      // Un échec SQLite ne doit pas laisser l'écran sur ses anciens compteurs en les faisant passer
+      // pour frais : on ne SAIT plus, et on le dit.
+      countByStatus()
+        .then((value) => setCounts({ kind: 'ok', counts: value }))
+        .catch(() => setCounts({ kind: 'unverifiable' }));
+
+      // `loadActiveColdAlerts` ne rejette jamais : l'incertitude est dans sa valeur de retour.
+      loadActiveColdAlerts().then(setCold);
     }, [])
   );
 
-  const [firstAlert] = coldAlerts;
+  const alerts = cold?.kind === 'ok' ? cold.alerts : [];
+  const [firstAlert] = alerts;
+
+  /** Le chiffre, ou l'aveu — jamais un zéro par défaut. */
+  const stat = (value: number | undefined) =>
+    counts === null ? LOADING : counts.kind === 'unverifiable' ? UNKNOWN : (value ?? UNKNOWN);
+
+  const queue = counts?.kind === 'ok' ? counts.counts : null;
 
   return (
     <View style={styles.screen}>
@@ -110,11 +130,20 @@ export default function HomeScreen() {
         </View>
 
         {/* Stats grid 2×2 */}
+        {/* « — » et non « 0 » : un chiffre qu'on n'a pas pu vérifier n'est pas un zéro. */}
         <View style={styles.statsGrid}>
-          <StatCard label="EN ATTENTE SYNC" value={counts.PENDING} />
-          <StatCard label="SYNCHRONISÉES" value={counts.SYNCED} />
-          <StatCard label="ALERTES FROID" value={coldAlerts.length} />
-          <StatCard label="À CORRIGER" value={counts.CONFLICT + counts.REJECTED} />
+          <StatCard label="EN ATTENTE SYNC" value={stat(queue?.PENDING)} />
+          <StatCard label="SYNCHRONISÉES" value={stat(queue?.SYNCED)} />
+          <StatCard
+            label="ALERTES FROID"
+            value={
+              cold === null ? LOADING : cold.kind === 'unverifiable' ? UNKNOWN : alerts.length
+            }
+          />
+          <StatCard
+            label="À CORRIGER"
+            value={stat(queue ? queue.CONFLICT + queue.REJECTED : undefined)}
+          />
         </View>
       </LinearGradient>
 
@@ -171,12 +200,32 @@ export default function HomeScreen() {
             iconColor="#2563EB"
             iconBg="#EFF6FF"
             title="Synchroniser"
+            // « Tout est à jour » est une AFFIRMATION. Sans compteurs lisibles, on n'en sait rien —
+            // et l'écran l'écrivait quand même, sous le bouton de synchronisation.
             subtitle={
-              counts.PENDING === 0 ? 'Tout est à jour' : `${counts.PENDING} en attente`
+              counts === null
+                ? 'Vérification…'
+                : counts.kind === 'unverifiable'
+                  ? 'File non vérifiée'
+                  : queue && queue.PENDING === 0
+                    ? 'Tout est à jour'
+                    : `${queue?.PENDING ?? 0} en attente`
             }
             onPress={() => router.navigate('/sync')}
           />
         </View>
+
+        {/* Ne PAS taire l'incertitude : une bannière absente se lit « aucune alerte ».
+            Mais seulement sur un ÉCHEC — pas pendant le chargement, sinon l'opérateur verrait
+            passer un message d'erreur à chaque ouverture de l'application. */}
+        {cold?.kind === 'unverifiable' && (
+          <View style={styles.alertUnknown}>
+            <Ionicons name="cloud-offline-outline" size={18} color="#6B7280" />
+            <Text style={styles.alertUnknownText}>
+              Alertes froid non vérifiées — impossible de joindre le serveur.
+            </Text>
+          </View>
+        )}
 
         {firstAlert && (
           <TouchableOpacity
@@ -401,6 +450,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#D97706',
   },
+  alertUnknown: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  alertUnknownText: { flex: 1, fontSize: 13, color: '#4B5563', lineHeight: 18 },
   alertMessage: {
     fontSize: 12,
     color: '#92400E',

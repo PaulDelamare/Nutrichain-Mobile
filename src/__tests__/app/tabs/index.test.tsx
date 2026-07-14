@@ -31,7 +31,7 @@ describe('écran d’accueil', () => {
     jest.clearAllMocks();
     mockedUser.mockReturnValue({ user: null, loading: false });
     mockedOnline.mockReturnValue(true);
-    mockedAlerts.mockResolvedValue([]);
+    mockedAlerts.mockResolvedValue({ kind: 'ok', alerts: [] });
     counts();
   });
 
@@ -67,9 +67,12 @@ describe('écran d’accueil', () => {
   });
 
   it('affiche l’alerte chaîne du froid en cours', async () => {
-    mockedAlerts.mockResolvedValue([
-      { id: '1', type: 'TEMP_EXCURSION', statut: 'ACTIVE', message: 'Palette SSCC 00376 — +4.2 °C' },
-    ]);
+    mockedAlerts.mockResolvedValue({
+      kind: 'ok',
+      alerts: [
+        { id: '1', type: 'TEMP_EXCURSION', statut: 'ACTIVE', message: 'Palette SSCC 00376 — +4.2 °C' },
+      ],
+    });
 
     render(<HomeScreen />);
 
@@ -83,5 +86,56 @@ describe('écran d’accueil', () => {
     render(<HomeScreen />);
 
     await waitFor(() => expect(screen.getByText('Scanner un lot')).toBeTruthy());
+  });
+
+  // ⚠️ LE test. « ALERTES FROID : 0 » sur une panne réseau, c'est la seule information sanitaire de
+  // l'écran qui annonce « tout va bien » — pendant une excursion thermique. L'ancien test vérifiait
+  // que l'app renvoyait `[]` : il CANONISAIT le mensonge.
+  it('n’affiche pas « 0 » alerte froid quand il n’a pas pu vérifier', async () => {
+    mockedAlerts.mockResolvedValue({ kind: 'unverifiable', error: new Error('offline') });
+
+    render(<HomeScreen />);
+
+    await waitFor(() => expect(screen.getByText(/Alertes froid non vérifiées/)).toBeTruthy());
+    expect(screen.getByText('ALERTES FROID')).toBeTruthy();
+    // Le « — » est présent, et surtout AUCUN zéro rassurant sous cette carte.
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
+
+  // « Tout est à jour » est une AFFIRMATION, plus grave encore que le chiffre : l'écran l'écrivait
+  // sous le bouton Synchroniser alors que la file était ILLISIBLE.
+  it('ne dit pas « Tout est à jour » quand la file est illisible', async () => {
+    mockedCounts.mockRejectedValue(new Error('base corrompue'));
+
+    render(<HomeScreen />);
+
+    await waitFor(() => expect(screen.getByText('File non vérifiée')).toBeTruthy());
+    expect(screen.queryByText('Tout est à jour')).toBeNull();
+  });
+
+  it('ne montre aucun chiffre avant d’avoir rien vérifié', async () => {
+    // Au tout premier rendu, les compteurs valaient 0 : un chiffre rassurant que personne n'avait
+    // demandé. Un compteur non chargé n'est pas un compteur à zéro.
+    mockedCounts.mockReturnValue(new Promise(() => undefined));
+    mockedAlerts.mockReturnValue(new Promise(() => undefined));
+
+    render(<HomeScreen />);
+
+    await waitFor(() => expect(screen.getByText('EN ATTENTE SYNC')).toBeTruthy());
+    expect(screen.queryByText('0')).toBeNull();
+    expect(screen.queryByText('Tout est à jour')).toBeNull();
+  });
+
+  // ⚠️ « Je charge » et « je n'ai pas pu » ne sont PAS la même chose. Les confondre ferait clignoter
+  // un message d'ÉCHEC à chaque ouverture de l'application — un mensonge à l'envers, celui-là.
+  it('ne crie pas à l’échec pendant un chargement normal', async () => {
+    mockedAlerts.mockReturnValue(new Promise(() => undefined));
+    mockedCounts.mockReturnValue(new Promise(() => undefined));
+
+    render(<HomeScreen />);
+
+    await waitFor(() => expect(screen.getByText('ALERTES FROID')).toBeTruthy());
+    expect(screen.queryByText(/Alertes froid non vérifiées/)).toBeNull();
+    expect(screen.queryByText('File non vérifiée')).toBeNull();
   });
 });
