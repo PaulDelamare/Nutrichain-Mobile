@@ -85,13 +85,17 @@ describe('loadAlertDecision', () => {
           },
         });
       }
-      if (url === '/api/organization/quarantine-batches') {
+      // ⚠️ On DEMANDE les lots de l'alerte. Avant, ils étaient devinés en filtrant
+      // `/organization/quarantine-batches` (tous les lots BLOQUE de l'org) sur l'équipement : un lot
+      // bloqué par un contrôle qualité sans rapport, rangé dans le même frigo, y entrait — et la
+      // levée le remettait en stock.
+      if (url === '/api/alerts/a1/batches') {
         return Promise.resolve({
           data: {
             data: [
-              { id: 'b1', lot_number: '260709-000099', quantite_actuelle: '120', unite_code: 'kg', id_materiel_actuel: 'eq1', produit: { nom: 'Beurre' } },
-              // Sur un AUTRE équipement : ne doit PAS être retenu (sinon on isolerait des lots sains).
-              { id: 'b2', lot_number: '260709-000100', quantite_actuelle: '5', unite_code: 'kg', id_materiel_actuel: 'eqOTHER', produit: { nom: 'Lait' } },
+              { id: 'b1', lot_number: '260709-000099', quantite_actuelle: '120', unite_code: 'kg', produit: { nom: 'Beurre' }, levable: true, motif_blocage: null },
+              // Isolé par le froid, mais déclaré non conforme DEPUIS : la levée ne doit pas le rendre.
+              { id: 'b2', lot_number: '260709-000100', quantite_actuelle: '5', unite_code: 'kg', produit: { nom: 'Lait' }, levable: false, motif_blocage: 'CONTROLE_NON_CONFORME' },
             ],
           },
         });
@@ -100,7 +104,7 @@ describe('loadAlertDecision', () => {
     });
   }
 
-  it('compose alerte + équipement + lots en quarantaine du bon équipement', async () => {
+  it('compose alerte + équipement + les lots que CETTE alerte retient', async () => {
     wireEndpoints();
 
     const result = await loadAlertDecision('a1');
@@ -113,15 +117,36 @@ describe('loadAlertDecision', () => {
     // Decimal Prisma (string) → number
     expect(decision?.tempMesuree).toBe(7.4);
     expect(decision?.tempSeuilMax).toBe(4);
-    // Filtre par id_materiel_actuel : seul b1 (eq1) est concerné, pas b2 (eqOTHER)
-    expect(decision?.batches).toHaveLength(1);
+
+    // Les lots viennent de l'API, qui sait lesquels CETTE alerte a isolés — on ne les devine plus.
+    expect(decision?.batches).toHaveLength(2);
     expect(decision?.batches[0]).toMatchObject({
       id: 'b1',
       lotNumber: '260709-000099',
       produitNom: 'Beurre',
       quantite: 120,
       uniteCode: 'kg',
+      levable: true,
+      motifBlocage: null,
     });
+    // Le lot condamné est transmis à l'écran — pour être MONTRÉ, pas pour être relâché.
+    expect(decision?.batches[1]).toMatchObject({
+      id: 'b2',
+      levable: false,
+      motifBlocage: 'CONTROLE_NON_CONFORME',
+    });
+  });
+
+  it("ne va JAMAIS chercher les lots dans « tous les lots bloqués de l'organisation »", async () => {
+    wireEndpoints();
+
+    await loadAlertDecision('a1');
+
+    // C'est cet appel qui causait le relâchement non consenti : il ramassait les lots bloqués pour
+    // n'importe quelle cause, du moment qu'ils étaient rangés dans le même frigo.
+    const urls = apiClient.get.mock.calls.map((c: unknown[]) => c[0]);
+    expect(urls).not.toContain('/api/organization/quarantine-batches');
+    expect(urls).toContain('/api/alerts/a1/batches');
   });
 
   // ⚠️ L'ancien test encodait le mensonge : « absente de la liste ⇒ null », que l'écran traduisait
@@ -194,21 +219,25 @@ describe('resolveAlert', () => {
 });
 
 describe('releaseAndResolve', () => {
-  const lot = (id: string, lotNumber: string) => ({
+  const lot = (id: string, lotNumber: string, levable = true) => ({
     id,
     lotNumber,
     produitNom: 'Beurre',
     quantite: 100,
     uniteCode: 'kg',
+    levable,
+    motifBlocage: levable ? null : ('CONTROLE_NON_CONFORME' as const),
   });
   const B1 = lot('b1', 'LOT-1');
   const B2 = lot('b2', 'LOT-2');
   const B3 = lot('b3', 'LOT-3');
+  /** Isolé par le froid, mais déclaré non conforme DEPUIS. La levée ne doit pas le rendre au stock. */
+  const CONDAMNE = lot('bx', 'LOT-X', false);
 
-  /** Ce que le SERVEUR dit encore bloqué, après coup. */
+  /** Ce que le SERVEUR dit que cette alerte retient ENCORE, après coup. */
   const stillBlocked = (...ids: string[]) =>
     apiClient.get.mockResolvedValue({
-      data: { data: ids.map((id) => ({ id, lot_number: id, quantite_actuelle: '1', unite_code: 'kg', id_materiel_actuel: 'eq1' })) },
+      data: { data: ids.map((id) => ({ id, lot_number: id, quantite_actuelle: '1', unite_code: 'kg', levable: true, motif_blocage: null })) },
     });
 
   it('lève chaque lot (motif obligatoire) puis clôture l’alerte', async () => {
@@ -223,6 +252,39 @@ describe('releaseAndResolve', () => {
     expect(apiClient.patch).toHaveBeenCalledWith('/api/alerts/a1/resolve', { note: 'faux positif capteur' });
     expect(outcome).toMatchObject({ alertResolved: true, stillBlocked: [] });
     expect(outcome.released).toHaveLength(2);
+  });
+
+  // ⚠️ LE test de cette PR. Un lot déclaré non conforme APRÈS son isolement est isolé par le froid
+  // ET impropre. Le rendre au stock parce que la chambre froide est réparée remettrait en
+  // circulation une marchandise que le labo a condamnée.
+  it('ne relâche JAMAIS un lot non levable, même en levant les autres', async () => {
+    apiClient.post.mockResolvedValue({ data: {} });
+    apiClient.patch.mockResolvedValue({ data: {} });
+    stillBlocked(); // le serveur ne retient plus aucun lot levable
+
+    const outcome = await releaseAndResolve('a1', [B1, CONDAMNE], 'frigo réparé');
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    expect(apiClient.post).toHaveBeenCalledWith('/api/logistics/batches/b1/release', { motif: 'frigo réparé' });
+    expect(apiClient.post).not.toHaveBeenCalledWith('/api/logistics/batches/bx/release', expect.anything());
+
+    expect(outcome.released.map((b) => b.id)).toEqual(['b1']);
+    // Il reste isolé — et l'opérateur doit le savoir.
+    expect(outcome.stillBlocked.map((b) => b.id)).toEqual(['bx']);
+  });
+
+  // ⚠️ Le piège inverse : refuser de clôturer tant qu'un lot est isolé rendrait l'alerte
+  // DÉFINITIVEMENT inclôturable — le blocage d'un lot condamné ne vient pas du froid, et rien dans
+  // ce circuit ne pourra jamais le lever. L'incident FROID, lui, est bien traité.
+  it('clôture quand même l’alerte quand il ne reste que des lots condamnés', async () => {
+    apiClient.post.mockResolvedValue({ data: {} });
+    apiClient.patch.mockResolvedValue({ data: {} });
+    stillBlocked();
+
+    const outcome = await releaseAndResolve('a1', [B1, CONDAMNE], 'frigo réparé');
+
+    expect(outcome.alertResolved).toBe(true);
+    expect(apiClient.patch).toHaveBeenCalledWith('/api/alerts/a1/resolve', { note: 'frigo réparé' });
   });
 
   // ⚠️ LE test. La boucle n'est pas atomique : elle abandonnait au premier échec, et l'écran

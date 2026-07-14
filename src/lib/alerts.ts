@@ -63,13 +63,15 @@ interface EquipmentApi {
   lieu?: { nom: string } | null;
 }
 
-interface QuarantineBatchApi {
+/** Ce que l'API répond pour `GET /alerts/:id/batches` — les lots que CETTE alerte retient. */
+interface AlertBatchApi {
   id: string;
   lot_number: string;
   quantite_actuelle: string;
   unite_code: string;
-  id_materiel_actuel: string | null;
   produit?: { nom: string } | null;
+  levable: boolean;
+  motif_blocage: 'CONTROLE_NON_CONFORME' | null;
 }
 
 export interface AlertDecisionBatch {
@@ -78,6 +80,13 @@ export interface AlertDecisionBatch {
   produitNom: string;
   quantite: number;
   uniteCode: string;
+  /**
+   * Faux si le lot porte un contrôle qualité NON CONFORME postérieur à son isolement : il est isolé
+   * par le froid ET déclaré impropre. Réparer la chambre froide ne le rend pas consommable — la
+   * levée de cette alerte ne doit PAS le remettre en stock.
+   */
+  levable: boolean;
+  motifBlocage: 'CONTROLE_NON_CONFORME' | null;
 }
 
 export interface AlertDecision {
@@ -155,21 +164,32 @@ async function buildAlertDecision(alertId: string): Promise<AlertDecisionResult>
     };
   }
 
-  const [{ data: eqResp }, { data: qbResp }] = await Promise.all([
+  // ⚠️ On DEMANDE les lots de l'alerte — on ne les devine plus.
+  //
+  // Avant, cette liste était reconstituée en filtrant `/organization/quarantine-batches` (qui renvoie
+  // TOUS les lots BLOQUE de l'organisation) sur l'équipement de l'alerte. Un lot bloqué par un
+  // contrôle qualité sans aucun rapport — corps étranger, DLC — mais rangé dans le même frigo s'y
+  // retrouvait, et « Enregistrer sans isolation » le REMETTAIT EN STOCK. Un relâchement non consenti,
+  // sur une marchandise que l'opérateur n'avait jamais examinée.
+  //
+  // L'API sait, elle, quels lots CETTE alerte retient (elle l'écrit depuis toujours). Elle dit aussi
+  // lesquels sont `levable` : un lot déclaré non conforme APRÈS son isolement ne doit pas repartir en
+  // stock sous prétexte que le frigo est réparé.
+  const [{ data: eqResp }, { data: abResp }] = await Promise.all([
     apiClient.get<{ data: EquipmentApi[] }>('/api/organization/equipment'),
-    apiClient.get<{ data: QuarantineBatchApi[] }>('/api/organization/quarantine-batches'),
+    apiClient.get<{ data: AlertBatchApi[] }>(`/api/alerts/${alertId}/batches`),
   ]);
 
   const equipment = eqResp.data.find((e) => e.id === materielId);
-  const batches: AlertDecisionBatch[] = qbResp.data
-    .filter((b) => b.id_materiel_actuel === materielId)
-    .map((b) => ({
-      id: b.id,
-      lotNumber: b.lot_number,
-      produitNom: b.produit?.nom ?? 'Produit inconnu',
-      quantite: toNumber(b.quantite_actuelle) ?? 0,
-      uniteCode: b.unite_code,
-    }));
+  const batches: AlertDecisionBatch[] = abResp.data.map((b) => ({
+    id: b.id,
+    lotNumber: b.lot_number,
+    produitNom: b.produit?.nom ?? 'Produit inconnu',
+    quantite: toNumber(b.quantite_actuelle) ?? 0,
+    uniteCode: b.unite_code,
+    levable: b.levable,
+    motifBlocage: b.motif_blocage,
+  }));
 
   return {
     kind: 'active',
@@ -220,13 +240,10 @@ export interface ReleaseOutcome {
   error?: unknown;
 }
 
-/** Les lots de cette liste encore `BLOQUE` selon le SERVEUR. */
-async function stillQuarantined(batches: AlertDecisionBatch[]): Promise<Set<string>> {
-  const { data } = await apiClient.get<{ data: QuarantineBatchApi[] }>(
-    '/api/organization/quarantine-batches'
-  );
-  const blocked = new Set(data.data.map((b) => b.id));
-  return new Set(batches.filter((b) => blocked.has(b.id)).map((b) => b.id));
+/** Les lots que cette alerte retient ENCORE, selon le SERVEUR. */
+async function stillQuarantined(alertId: string): Promise<Set<string>> {
+  const { data } = await apiClient.get<{ data: AlertBatchApi[] }>(`/api/alerts/${alertId}/batches`);
+  return new Set(data.data.map((b) => b.id));
 }
 
 /**
@@ -254,9 +271,16 @@ export async function releaseAndResolve(
   batches: AlertDecisionBatch[],
   motif: string
 ): Promise<ReleaseOutcome> {
+  // ⚠️ On ne relâche QUE les lots levables. Un lot déclaré non conforme après son isolement est isolé
+  // par le froid ET impropre : le rendre au stock parce que la chambre froide est réparée serait
+  // remettre en circulation une marchandise que le labo a condamnée. Il reste isolé — et un autre
+  // circuit (le contrôle qualité) tranchera son sort.
+  const levables = batches.filter((b) => b.levable);
+  const condamnes = batches.filter((b) => !b.levable);
+
   let failure: unknown;
 
-  for (const batch of batches) {
+  for (const batch of levables) {
     try {
       await apiClient.post(`/api/logistics/batches/${batch.id}/release`, { motif });
     } catch (error: unknown) {
@@ -267,21 +291,31 @@ export async function releaseAndResolve(
     }
   }
 
-  let blocked: Set<string>;
+  let held: Set<string>;
   try {
-    blocked = await stillQuarantined(batches);
+    held = await stillQuarantined(alertId);
   } catch (error: unknown) {
     // On ne peut même plus observer : on ne prétend RIEN. Aucun lot n'est déclaré relâché.
     return { released: [], stillBlocked: batches, alertResolved: false, error: failure ?? error };
   }
 
-  const released = batches.filter((b) => !blocked.has(b.id));
-  const stillBlocked = batches.filter((b) => blocked.has(b.id));
+  const released = levables.filter((b) => !held.has(b.id));
+  const echoues = levables.filter((b) => held.has(b.id));
 
-  if (stillBlocked.length > 0) {
-    return { released, stillBlocked, alertResolved: false, error: failure };
+  if (echoues.length > 0) {
+    // Les condamnés ne sont pas un échec — ils sont un refus assumé. Mais ils restent isolés, donc
+    // l'opérateur doit les voir dans la liste de ce qui l'est encore.
+    return {
+      released,
+      stillBlocked: [...echoues, ...condamnes],
+      alertResolved: false,
+      error: failure,
+    };
   }
 
+  // ⚠️ L'alerte se clôture même s'il reste des lots condamnés. Ne pas la clôturer la rendrait
+  // DÉFINITIVEMENT inclôturable : leur blocage ne vient pas du froid, et rien dans ce circuit ne
+  // pourra jamais le lever. L'incident froid, lui, est bien traité.
   await resolveAlert(alertId, motif);
-  return { released, stillBlocked: [], alertResolved: true };
+  return { released, stillBlocked: condamnes, alertResolved: true };
 }
