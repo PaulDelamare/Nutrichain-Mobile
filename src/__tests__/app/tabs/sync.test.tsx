@@ -1,5 +1,4 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react-native';
-import { Alert } from 'react-native';
 
 import { countByStatus, deleteOperation, listOperations, requeueOperation } from '@/lib/sync/queue';
 import { syncPendingOperations } from '@/lib/sync/sync';
@@ -39,20 +38,22 @@ function withOperations(...operations: QueuedOperation[]): void {
   queue.countByStatus.mockResolvedValue({ PENDING: 0, SYNCED: 0, CONFLICT: 0, REJECTED: 0 });
 }
 
-/** Les deux actions passent par une confirmation : on joue le bouton de l'alerte. */
-function confirmAlert(label: string): void {
-  const [, , buttons] = jest.mocked(Alert.alert).mock.calls.at(-1) as unknown as [
-    string,
-    string,
-    { text: string; onPress?: () => void }[],
-  ];
-  buttons.find((button) => button.text === label)?.onPress?.();
+/**
+ * Les deux actions passent par une confirmation. Elle n'utilise plus `Alert.alert` — un no-op
+ * littéral sur le web, où se fait la démo : les boutons y étaient MORTS. C'est une vraie modale,
+ * donc on la pilote comme l'opérateur : en appuyant dessus.
+ *
+ * Le libellé de confirmation est le même que celui du bouton de la liste : la modale étant rendue
+ * après, c'est la DERNIÈRE occurrence.
+ */
+function confirmDialog(label: string): void {
+  const buttons = screen.getAllByText(label);
+  fireEvent.press(buttons[buttons.length - 1]);
 }
 
 describe('écran de synchronisation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
     queue.requeueOperation.mockResolvedValue('nouvel-id');
     queue.deleteOperation.mockResolvedValue(undefined);
     mockedSync.mockResolvedValue({ sent: 0, synced: 0, conflicts: 0, rejected: 0, retried: 0 });
@@ -69,7 +70,7 @@ describe('écran de synchronisation', () => {
     // Un renvoi écrit dans le registre de traçabilité : il ne part pas sur un simple effleurement.
     expect(queue.requeueOperation).not.toHaveBeenCalled();
 
-    confirmAlert('Renvoyer');
+    confirmDialog('Renvoyer');
 
     await waitFor(() => expect(queue.requeueOperation).toHaveBeenCalledWith('op-REJECTED'));
   });
@@ -81,7 +82,7 @@ describe('écran de synchronisation', () => {
 
     await waitFor(() => expect(screen.getByText('Supprimer')).toBeTruthy());
     fireEvent.press(screen.getByText('Supprimer'));
-    confirmAlert('Supprimer');
+    confirmDialog('Supprimer');
 
     await waitFor(() => expect(queue.deleteOperation).toHaveBeenCalledWith('op-REJECTED'));
   });
@@ -103,9 +104,9 @@ describe('écran de synchronisation', () => {
     );
 
     fireEvent.press(screen.getByText('Renvoyer'));
-    confirmAlert('Renvoyer');
+    confirmDialog('Renvoyer');
     fireEvent.press(screen.getByText('Renvoyer'));
-    confirmAlert('Renvoyer');
+    confirmDialog('Renvoyer');
 
     resolveRequeue('nouvel-id');
 

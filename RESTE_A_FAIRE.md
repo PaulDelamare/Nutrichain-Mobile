@@ -437,6 +437,36 @@ même._
 - [x] **Le mobile décode le code scanné** (`src/lib/gs1.ts`) et l'étiquette d'un **matériel**
       (`EQP-…`) n'ouvre plus une réception. (Mobile #24.)
 
+### 10.0 🔴 Le mobile ne fonctionnait pas dans un navigateur — et la démo s'y fait
+
+- [x] **`Alert.alert` est un no-op LITTÉRAL sur React Native Web** (`static alert() {}`, corps vide).
+      _Conséquence : « Renvoyer », « Supprimer » et surtout **« Lever la quarantaine »** — la
+      décision la plus lourde de l'application — étaient des **boutons MORTS** dans un navigateur.
+      On cliquait, il ne se passait rien, et rien ne l'expliquait._
+      ✅ **FAIT** — `<ConfirmDialog>` (une `Modal`, qui marche sur les deux plateformes). Vu à
+      l'écran dans le navigateur.
+
+- [x] **Le scanner caméra n'était JAMAIS démarré sur le web.** `barcodeScannerSettings.barcodeTypes`
+      n'était configuré nulle part, or expo-camera fait
+      `isScannerEnabled = !!barcodeTypes?.length && !!onBarcodeScanned` (ExpoCamera.web.js).
+      _Conséquence : `onBarcodeScanned` n'était jamais appelé. Le scan caméra, l'argument central du
+      POC mobile, ne fonctionnait pas là où se fait la démo._
+      ⚠️ Sur **natif**, la prop n'est PAS lue (le module scanne déjà tout) : une liste restreinte
+      aurait **régressé le natif**. D'où la liste complète.
+      ✅ **FAIT et PROUVÉ** — le QR réellement imprimé par l'API a été présenté à la caméra dans un
+      navigateur : elle l'a décodé **seule**, sans aucune saisie, et a ouvert la bonne fiche.
+      _(C'était la première fois que le scan caméra était démontré sur ce projet — toutes les
+      vérifications précédentes passaient par la saisie manuelle.)_
+
+- [ ] 🔴 **Le décodeur web télécharge son WASM depuis un CDN, à l'exécution.** Chrome sous Windows
+      n'implémente pas `BarcodeDetector` : expo-camera charge un polyfill qui va chercher
+      `zxing_reader.wasm` sur **`fastly.jsdelivr.net`** (constaté dans le journal réseau).
+      _Conséquence : **démo sans Internet = scan caméra mort**, sur une application dont l'argument
+      de vente est « ça marche hors ligne ». La salle de soutenance doit avoir du réseau — ou le
+      premier scan échoue devant le jury._
+      → Servir le `.wasm` en local (`prepareZXingModule` / `setZXingModuleOverrides` vers un fichier
+      du dépôt). **MOBILE. Petit, et c'est un risque de démo.**
+
 ### 10.1 🔴 Ce qui reste ouvert sur le scan
 
 - [x] **Au-delà de 100 lots, la transformation et l'expédition MENTAIENT.** Elles résolvaient le code

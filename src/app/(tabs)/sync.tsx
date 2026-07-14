@@ -3,7 +3,6 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   StyleSheet,
   Text,
@@ -13,6 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { toastError } from '@/lib/toast';
 import {
@@ -27,6 +27,15 @@ import { syncPendingOperations } from '@/lib/sync/sync';
 import { isBlocked, type OperationStatus, type QueuedOperation } from '@/lib/sync/types';
 
 import { BRAND } from '@/lib/theme';
+
+/** Une décision en attente de confirmation : ce qu'on affiche, et ce qu'on fera si on confirme. */
+interface PendingConfirmation {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  destructive?: boolean;
+  run: () => void;
+}
 
 const EMPTY_COUNTS: Record<OperationStatus, number> = {
   PENDING: 0,
@@ -110,34 +119,37 @@ export default function SyncScreen() {
       }
     });
 
-  const confirmRequeue = (operation: QueuedOperation) => {
-    // Renvoyer écrit dans le registre de traçabilité : c'est l'action risquée, pas la
-    // suppression (un scan supprimé peut être refait ; une réception en double, non).
-    Alert.alert('Renvoyer cette opération ?', 'Elle sera transmise comme une nouvelle réception.', [
-      { text: 'Annuler', style: 'cancel' },
-      { text: 'Renvoyer', onPress: () => requeue(operation) },
-    ]);
-  };
+  // ⚠️ PAS `Alert.alert` : c'est un no-op littéral sur le web (corps de méthode vide), et la démo se
+  // fait dans un navigateur. Ces deux boutons y étaient MORTS — on cliquait, il ne se passait rien.
+  const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null);
 
-  const confirmDelete = (clientOpId: string) => {
-    Alert.alert('Supprimer cette opération ?', 'Le scan sera définitivement abandonné.', [
-      { text: 'Annuler', style: 'cancel' },
-      {
-        text: 'Supprimer',
-        style: 'destructive',
-        onPress: () =>
-          runExclusively(clientOpId, async () => {
-            try {
-              await deleteOperation(clientOpId);
-              await refresh();
-            } catch (error: unknown) {
-              // Sans ce message, l'opérateur croirait le scan supprimé alors qu'il est resté.
-              toastError('Suppression impossible', error);
-            }
-          }),
-      },
-    ]);
-  };
+  // Renvoyer écrit dans le registre de traçabilité : c'est l'action risquée, pas la suppression
+  // (un scan supprimé peut être refait ; une réception en double, non).
+  const confirmRequeue = (operation: QueuedOperation) =>
+    setConfirmation({
+      title: 'Renvoyer cette opération ?',
+      message: 'Elle sera transmise comme une nouvelle réception.',
+      confirmLabel: 'Renvoyer',
+      run: () => requeue(operation),
+    });
+
+  const confirmDelete = (clientOpId: string) =>
+    setConfirmation({
+      title: 'Supprimer cette opération ?',
+      message: 'Le scan sera définitivement abandonné.',
+      confirmLabel: 'Supprimer',
+      destructive: true,
+      run: () =>
+        runExclusively(clientOpId, async () => {
+          try {
+            await deleteOperation(clientOpId);
+            await refresh();
+          } catch (error: unknown) {
+            // Sans ce message, l'opérateur croirait le scan supprimé alors qu'il est resté.
+            toastError('Suppression impossible', error);
+          }
+        }),
+    });
 
   const handleSync = async () => {
     setSyncing(true);
@@ -289,6 +301,21 @@ export default function SyncScreen() {
           </>
         )}
       </TouchableOpacity>
+
+      <ConfirmDialog
+        visible={confirmation !== null}
+        title={confirmation?.title ?? ''}
+        message={confirmation?.message ?? ''}
+        confirmLabel={confirmation?.confirmLabel ?? ''}
+        destructive={confirmation?.destructive}
+        onCancel={() => setConfirmation(null)}
+        onConfirm={() => {
+          // La confirmation se ferme AVANT l'action : sinon un double appui la relancerait.
+          const decision = confirmation;
+          setConfirmation(null);
+          decision?.run();
+        }}
+      />
     </View>
   );
 }

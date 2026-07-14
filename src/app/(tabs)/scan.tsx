@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 
+import { SCANNED_BARCODE_TYPES } from '@/lib/barcodes';
 import { lookupBatch } from '@/lib/batches';
 import { isEquipmentCode } from '@/lib/equipment';
 import { ApiError, getErrorMessage } from '@/lib/errors';
@@ -150,6 +151,7 @@ export default function ScanScreen() {
           style={StyleSheet.absoluteFill}
           facing="back"
           onBarcodeScanned={({ data }) => handleCode(data)}
+          barcodeScannerSettings={{ barcodeTypes: SCANNED_BARCODE_TYPES }}
         />
 
         {/* Dark overlay — top */}
