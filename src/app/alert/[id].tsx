@@ -19,6 +19,7 @@ import {
   releaseAndResolve,
   resolveAlert,
   type AlertDecisionResult,
+  type ReleaseOutcome,
 } from '@/lib/alerts';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { toastError } from '@/lib/toast';
@@ -68,6 +69,9 @@ export default function AlertDecisionScreen() {
   const [confirming, setConfirming] = useState(false);
   // « Réessayer » : on rejoue l'effet, plutôt que de dupliquer le chargement.
   const [attempt, setAttempt] = useState(0);
+  // Le compte-rendu d'une levée PARTIELLE. Un toast disparaît ; l'opérateur reviendrait sur un
+  // écran identique, sans savoir que de la marchandise est déjà repartie en stock.
+  const [partial, setPartial] = useState<ReleaseOutcome | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -100,7 +104,14 @@ export default function AlertDecisionScreen() {
     setSubmitting(true);
     try {
       await resolveAlert(decision.alert.id, note);
-      done('Quarantaine maintenue', 'Alerte clôturée ; lot(s) laissé(s) en quarantaine.');
+      // ⚠️ Sans lot isolé, dire « lot(s) laissé(s) en quarantaine » serait un FAUX TÉMOIGNAGE : ils
+      // sont tous en stock. Le message doit décrire ce qui est, pas ce qu'on croit avoir fait.
+      done(
+        decision.batches.length === 0 ? 'Alerte clôturée' : 'Quarantaine maintenue',
+        decision.batches.length === 0
+          ? 'Aucun lot n’est plus en quarantaine.'
+          : 'Alerte clôturée ; lot(s) laissé(s) en quarantaine.'
+      );
     } catch (error: unknown) {
       toastError('Action impossible', error);
     } finally {
@@ -109,16 +120,29 @@ export default function AlertDecisionScreen() {
   };
 
   const releaseConfirmed = async () => {
-    if (!decision) return;
+    if (!decision || submitting) return;
     setSubmitting(true);
     try {
       // La note saisie sert de motif de levée (obligatoire côté API) ET de note de résolution.
-      await releaseAndResolve(
-        decision.alert.id,
-        decision.batches.map((b) => b.id),
-        note.trim()
+      const outcome = await releaseAndResolve(decision.alert.id, decision.batches, note.trim());
+
+      if (outcome.alertResolved) {
+        done('Quarantaine levée', `${outcome.released.length} lot(s) remis en stock ; alerte clôturée.`);
+        return;
+      }
+
+      // ⚠️ LA correction. La boucle n'est pas atomique : des lots ont pu partir avant l'échec. Dire
+      // « Levée impossible » ferait croire à l'opérateur que RIEN n'a bougé — alors que de la
+      // marchandise suspectée d'excursion thermique est déjà repartie en stock.
+      setPartial(outcome);
+      toastError(
+        outcome.released.length > 0
+          ? `${outcome.released.length} lot(s) sur ${decision.batches.length} remis en stock`
+          : 'Aucun lot n’a pu être remis en stock',
+        outcome.error
       );
-      done('Quarantaine levée', 'Lot(s) remis en stock ; alerte clôturée.');
+      // On NE revient PAS en arrière : l'opérateur doit voir les lots encore isolés.
+      retry();
     } catch (error: unknown) {
       toastError('Levée impossible', error);
     } finally {
@@ -241,6 +265,16 @@ export default function AlertDecisionScreen() {
         </View>
       </LinearGradient>
 
+      {partial && (
+        <View style={styles.partial}>
+          <Ionicons name="alert-circle" size={18} color="#B45309" />
+          <Text style={styles.partialText}>
+            Levée incomplète : {partial.released.length} lot(s) déjà remis en stock,{' '}
+            {partial.stillBlocked.length} encore isolé(s). L’alerte reste ouverte.
+          </Text>
+        </View>
+      )}
+
       <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 24 }]}>
         {/* ── Carte incident ─────────────────────────────────────── */}
         <View style={styles.card}>
@@ -344,6 +378,15 @@ const styles = StyleSheet.create({
   notFoundWrap: { padding: 24, gap: 16 },
   notFound: { textAlign: 'center', color: '#6B7280', fontSize: 15, lineHeight: 22 },
   notFoundStrong: { color: '#374151', fontWeight: '700' },
+  partial: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  partialText: { flex: 1, fontSize: 13, color: '#92400E', lineHeight: 18 },
   noBatches: { textAlign: 'center', color: '#6B7280', fontSize: 13, lineHeight: 18, paddingVertical: 8 },
   backLink: { color: DANGER, fontWeight: '700', fontSize: 15 },
 

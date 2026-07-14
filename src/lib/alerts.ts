@@ -1,4 +1,5 @@
 import { apiClient } from './api';
+import { isNetworkError } from './errors';
 
 export interface Alert {
   id: string;
@@ -207,18 +208,80 @@ export async function resolveAlert(alertId: string, note?: string): Promise<void
   );
 }
 
+/** Ce qui s'est RÉELLEMENT passé — observé côté serveur, jamais déduit des exceptions. */
+export interface ReleaseOutcome {
+  /** Lots effectivement sortis de quarantaine. */
+  released: AlertDecisionBatch[];
+  /** Lots ENCORE isolés. Tant qu'il y en a, la levée n'est pas terminée. */
+  stillBlocked: AlertDecisionBatch[];
+  /** L'alerte n'est clôturée que si plus aucun lot n'est isolé. */
+  alertResolved: boolean;
+  /** La cause de l'échec, s'il y en a eu une — pour la dire à l'opérateur. */
+  error?: unknown;
+}
+
+/** Les lots de cette liste encore `BLOQUE` selon le SERVEUR. */
+async function stillQuarantined(batches: AlertDecisionBatch[]): Promise<Set<string>> {
+  const { data } = await apiClient.get<{ data: QuarantineBatchApi[] }>(
+    '/api/organization/quarantine-batches'
+  );
+  const blocked = new Set(data.data.map((b) => b.id));
+  return new Set(batches.filter((b) => blocked.has(b.id)).map((b) => b.id));
+}
+
 /**
- * « Enregistrer sans isolation » : lève la quarantaine des lots (BLOQUE → EN_STOCK)
- * puis clôture l'alerte. Le `motif` (obligatoire côté API, 3–500 car.) et la note
- * partagent le texte d'action corrective saisi par l'opérateur.
+ * « Enregistrer sans isolation » : lève la quarantaine des lots, puis clôture l'alerte.
+ *
+ * ⚠️ La boucle n'est PAS atomique (l'API n'a pas d'endpoint de levée en masse). Elle ne l'était pas
+ * non plus avant — mais elle **abandonnait au premier échec** en laissant croire que rien n'avait
+ * bougé : sur 5 lots, si le 3e échouait, les deux premiers étaient **déjà remis en stock** et
+ * l'écran affichait « Levée impossible ». L'opérateur repartait convaincu que sa marchandise
+ * suspecte était toujours isolée.
+ *
+ * Trois règles, chacune apprise d'une erreur :
+ *
+ * 1. **Une panne réseau ARRÊTE la boucle.** Insister, c'est 30 s de délai d'attente × N lots :
+ *    deux minutes trente de spinner bloquant, dans une chambre froide. Une erreur applicative (le
+ *    serveur a répondu), elle, ne concerne qu'un lot : on continue.
+ * 2. **Le compte-rendu est OBSERVÉ, pas déduit.** Le `release` n'est pas idempotent : un lot déjà
+ *    relâché répond **409 pour toujours**. Compter ce 409 comme un échec rendrait l'alerte
+ *    **définitivement inclôturable**. On relit donc l'état réel côté serveur.
+ * 3. **L'alerte n'est clôturée que si plus aucun lot n'est isolé.** Sinon elle disparaîtrait de
+ *    l'écran avec de la marchandise suspecte encore bloquée — et personne pour la traiter.
  */
 export async function releaseAndResolve(
   alertId: string,
-  batchIds: string[],
+  batches: AlertDecisionBatch[],
   motif: string
-): Promise<void> {
-  for (const id of batchIds) {
-    await apiClient.post(`/api/logistics/batches/${id}/release`, { motif });
+): Promise<ReleaseOutcome> {
+  let failure: unknown;
+
+  for (const batch of batches) {
+    try {
+      await apiClient.post(`/api/logistics/batches/${batch.id}/release`, { motif });
+    } catch (error: unknown) {
+      failure = error;
+      // Sans réponse du serveur, les suivants échoueront pareil : on ne fait pas patienter
+      // l'opérateur 30 secondes de plus par lot.
+      if (isNetworkError(error)) break;
+    }
   }
+
+  let blocked: Set<string>;
+  try {
+    blocked = await stillQuarantined(batches);
+  } catch (error: unknown) {
+    // On ne peut même plus observer : on ne prétend RIEN. Aucun lot n'est déclaré relâché.
+    return { released: [], stillBlocked: batches, alertResolved: false, error: failure ?? error };
+  }
+
+  const released = batches.filter((b) => !blocked.has(b.id));
+  const stillBlocked = batches.filter((b) => blocked.has(b.id));
+
+  if (stillBlocked.length > 0) {
+    return { released, stillBlocked, alertResolved: false, error: failure };
+  }
+
   await resolveAlert(alertId, motif);
+  return { released, stillBlocked: [], alertResolved: true };
 }
