@@ -19,7 +19,10 @@ export interface ReceiptPayload {
   id_produit: string;
   quantite_actuelle: number;
   unite_code: string;
-  statut_controle: 'OK' | 'ALERTE' | 'NONCONFORME' | 'CONFORME';
+  // Le serveur accepte aussi 'CONFORME', mais le traite EXACTEMENT comme 'OK' (lot EN_STOCK,
+  // aucun effet distinct) : offrir les deux ne pouvait qu'égarer. Le mobile n'émet donc que ces
+  // trois-là. ALERTE et NONCONFORME créent le lot en quarantaine (BLOQUE) côté serveur.
+  statut_controle: 'OK' | 'ALERTE' | 'NONCONFORME';
   /**
    * Emplacement de stockage du lot (matériel → lieu). Optionnel pour le serveur, mais
    * décisif : la quarantaine automatique sur excursion de température ne bloque QUE les lots

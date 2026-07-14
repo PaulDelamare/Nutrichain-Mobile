@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 
 import { CodeScanner } from '@/components/code-scanner';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { OptionPicker } from '@/components/option-picker';
 import { loadProducts, loadSuppliers, type Product, type Supplier } from '@/lib/catalog';
 import {
@@ -32,12 +33,25 @@ import type { ReceiptPayload } from '@/lib/sync/types';
 import { BRAND, HEADER_GRADIENT } from '@/lib/theme';
 import { toastError } from '@/lib/toast';
 
-const CONTROL_STATUSES: ReceiptPayload['statut_controle'][] = [
-  'OK',
-  'CONFORME',
-  'ALERTE',
-  'NONCONFORME',
+// Libellés MÉTIER, pas les codes d'énum : un opérateur ne doit pas cocher « NONCONFORME » comme
+// une case anodine. Deux de ces statuts — ALERTE et NONCONFORME — créent le lot en quarantaine
+// (BLOQUE) côté serveur ; on le signale (`quarantine`) pour l'annoncer avant d'enregistrer.
+// « CONFORME » est retiré : le serveur le traite comme OK, c'était un quatrième choix sans effet.
+const CONTROL_OPTIONS: {
+  value: ReceiptPayload['statut_controle'];
+  label: string;
+  quarantine: boolean;
+}[] = [
+  { value: 'OK', label: 'Conforme', quarantine: false },
+  { value: 'ALERTE', label: 'Alerte sanitaire', quarantine: true },
+  { value: 'NONCONFORME', label: 'Non conforme', quarantine: true },
 ];
+
+/** Statuts qui placent le lot en quarantaine à la réception. Miroir de `QUARANTINE_RECEIPT_CONTROLS`
+ *  côté API : afficher une conséquence différente de celle réellement appliquée mentirait à l'écran. */
+const QUARANTINE_STATUSES = new Set(
+  CONTROL_OPTIONS.filter((option) => option.quarantine).map((option) => option.value)
+);
 
 export default function ReceptionScreen() {
   const insets = useSafeAreaInsets();
@@ -57,6 +71,9 @@ export default function ReceptionScreen() {
   const [location, setLocation] = useState<Equipment | null>(null);
   const [scanningLocation, setScanningLocation] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Le statut choisi met-il le lot en quarantaine ? Décide de l'avertissement et de la confirmation.
+  const [confirmingQuarantine, setConfirmingQuarantine] = useState(false);
+  const isQuarantineStatus = QUARANTINE_STATUSES.has(status);
 
   // Les unités viennent des produits, jamais d'une liste codée en dur : elles sont des
   // clés étrangères côté serveur, et « KG » n'y existe pas — c'est « kg ». Une constante
@@ -118,7 +135,10 @@ export default function ReceptionScreen() {
     equipmentId: location?.id,
   });
 
-  const handleSubmit = async () => {
+  // Écrit réellement la réception dans la file locale (chemin nominal, ou après confirmation de
+  // quarantaine). Ferme la confirmation d'abord : elle a joué son rôle.
+  const persistReceipt = async () => {
+    setConfirmingQuarantine(false);
     if (!receipt || saving) return;
     setSaving(true);
 
@@ -140,6 +160,17 @@ export default function ReceptionScreen() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSubmitPress = () => {
+    if (!receipt || saving) return;
+    // Mettre un lot en quarantaine est une décision sanitaire lourde : on NOMME la conséquence et
+    // on la fait confirmer avant d'écrire. Sinon elle partait sur un simple effleurement de puce.
+    if (isQuarantineStatus) {
+      setConfirmingQuarantine(true);
+      return;
+    }
+    void persistReceipt();
   };
 
   return (
@@ -210,12 +241,23 @@ export default function ReceptionScreen() {
               onSelect={setUnit}
             />
 
-            <OptionPicker
-              label="Contrôle"
-              options={CONTROL_STATUSES.map((s) => ({ value: s, label: s }))}
-              selected={status}
-              onSelect={(value) => setStatus(value as ReceiptPayload['statut_controle'])}
-            />
+            <View style={styles.field}>
+              <OptionPicker
+                label="Contrôle qualité à la réception"
+                options={CONTROL_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+                selected={status}
+                onSelect={(value) => setStatus(value as ReceiptPayload['statut_controle'])}
+              />
+
+              {/* La conséquence est dite AVANT de valider : l'opérateur voit, dès la sélection, que
+                  ce statut isolera le lot — pas seulement au moment d'appuyer sur Enregistrer. */}
+              {isQuarantineStatus && (
+                <Text style={styles.quarantineNotice}>
+                  ⚠️ Ce statut placera le lot en quarantaine : créé bloqué, ni transformable ni
+                  expédiable tant qu&apos;un contrôle qualité ne l&apos;aura pas levé.
+                </Text>
+              )}
+            </View>
 
             <View style={styles.field}>
               <Text style={styles.label}>Emplacement de stockage</Text>
@@ -255,7 +297,7 @@ export default function ReceptionScreen() {
 
             <TouchableOpacity
               style={[styles.submit, !receipt && styles.submitDisabled]}
-              onPress={handleSubmit}
+              onPress={handleSubmitPress}
               disabled={!receipt || saving}
               activeOpacity={0.85}
             >
@@ -275,6 +317,18 @@ export default function ReceptionScreen() {
         hint="Placez l'étiquette du frigo, du congélateur ou de l'étagère dans le cadre."
         onClose={() => setScanningLocation(false)}
         onScan={handleLocationScan}
+      />
+
+      {/* Dernière porte avant d'écrire une mise en quarantaine : ConfirmDialog, pas Alert.alert
+          (no-op sur le web, où se fait la démo). Le bouton rouge dit qu'on isole un lot. */}
+      <ConfirmDialog
+        visible={confirmingQuarantine}
+        title="Mettre ce lot en quarantaine ?"
+        message="Ce lot sera créé en quarantaine (BLOQUÉ) : ni transformation ni expédition possibles tant qu'un contrôle qualité ne l'aura pas levé."
+        confirmLabel="Mettre en quarantaine"
+        destructive
+        onCancel={() => setConfirmingQuarantine(false)}
+        onConfirm={() => void persistReceipt()}
       />
     </View>
   );
@@ -340,6 +394,16 @@ const styles = StyleSheet.create({
   locationName: { fontSize: 14, fontWeight: '600', color: '#111827' },
   locationPlace: { fontSize: 12, color: '#6B7280' },
   warning: { fontSize: 12, color: '#B45309' },
+  // Conséquence sanitaire lourde : fond ambré pour qu'elle ne se lise pas comme une note anodine.
+  quarantineNotice: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#92400E',
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    padding: 10,
+    lineHeight: 18,
+  },
   submitDisabled: { backgroundColor: '#9CA3AF' },
   submitText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 });
