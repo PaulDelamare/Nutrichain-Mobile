@@ -41,8 +41,11 @@ const empty = (raw: string): ScannedCode => ({
   raw,
 });
 
-/** Un GTIN-13 et un GTIN-14 zéro-paddé désignent le même produit — mais ne s'égalent pas. */
-function normalizeGtin(value: string): string | null {
+/**
+ * Un GTIN-13 et un GTIN-14 zéro-paddé désignent le même produit — mais ne s'égalent pas.
+ * Exporté pour comparer le GTIN d'un code scanné aux `code_gtin` du catalogue (13 chiffres en base).
+ */
+export function normalizeGtin(value: string): string | null {
   const digits = value.trim();
   if (!/^\d{8,14}$/.test(digits)) {
     return null;

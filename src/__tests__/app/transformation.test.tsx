@@ -101,7 +101,9 @@ describe('écran de transformation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedLookup.mockImplementation(resolveLocally);
-    mockedLoadProducts.mockResolvedValue([{ id: 'p-1', nom: 'Yaourt nature', unite_reference: 'kg' }]);
+    mockedLoadProducts.mockResolvedValue([
+      { id: 'p-1', nom: 'Yaourt nature', unite_reference: 'kg', code_gtin: '3042040209123' },
+    ]);
     mockedLoadEquipment.mockResolvedValue([]);
     mockedLoadBatches.mockResolvedValue([batch()]);
   });

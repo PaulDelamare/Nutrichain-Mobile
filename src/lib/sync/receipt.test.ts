@@ -62,4 +62,37 @@ describe('buildReceipt', () => {
     expect(buildReceipt({ ...VALID, supplierId: '' })).toBeNull();
     expect(buildReceipt({ ...VALID, productId: '' })).toBeNull();
   });
+
+  // ─── Numéro de lot (AI 10) et DLC (AI 17) décodés du scan (issue #31) ──────────────────────
+  describe('lot et DLC décodés de l’étiquette', () => {
+    // La raison d'être du scan : ces valeurs étaient JETÉES. Sans elles, la palette rescannée
+    // redevient un lot inconnu, et l'API — qui sait pourtant les enregistrer — n'en voit rien.
+    it('transmet le lot_number et la date_peremption', () => {
+      const receipt = buildReceipt({ ...VALID, lotNumber: '260714-ABC123', expiry: '2026-12-31' });
+      expect(receipt?.lot_number).toBe('260714-ABC123');
+      expect(receipt?.date_peremption).toBe('2026-12-31');
+    });
+
+    it('coupe les espaces et omet un lot vide plutôt que d’envoyer une chaîne vide', () => {
+      expect(buildReceipt(VALID)).not.toHaveProperty('lot_number');
+      expect(buildReceipt({ ...VALID, lotNumber: '  ' })).not.toHaveProperty('lot_number');
+      expect(buildReceipt({ ...VALID, lotNumber: '  LOT9  ' })?.lot_number).toBe('LOT9');
+    });
+
+    // Le serveur borne le lot à [A-Za-z0-9._-] : un « / » casse l'URL Digital Link, et l'envoyer
+    // ferait rejeter TOUT le lot de sync (400). On omet le champ (le serveur génère un numéro)
+    // plutôt que de bloquer une réception par ailleurs valide.
+    it('omet un lot_number hors charset serveur sans invalider la réception', () => {
+      const receipt = buildReceipt({ ...VALID, lotNumber: 'A/B' });
+      expect(receipt).not.toBeNull();
+      expect(receipt).not.toHaveProperty('lot_number');
+    });
+
+    // La DLC doit être un jour ISO strict (AAAA-MM-JJ) : le serveur refuse tout autre format.
+    it('omet une DLC qui n’est pas au format AAAA-MM-JJ, sans invalider la réception', () => {
+      const receipt = buildReceipt({ ...VALID, expiry: '31/12/2026' });
+      expect(receipt).not.toBeNull();
+      expect(receipt).not.toHaveProperty('date_peremption');
+    });
+  });
 });
