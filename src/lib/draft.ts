@@ -110,6 +110,8 @@ export interface ShipmentDraft {
   shipmentId: string;
   carrier: string;
   address: string;
+  /** (issue #76) Le n° est-il délégué au serveur (SSCC 'AUTO') ? À restaurer comme le reste. */
+  autoShipmentId: boolean;
   /** Les lots scannés pour l'expédition, avec la quantité chargée. */
   lots: { batch: Batch; quantity: string }[];
 }

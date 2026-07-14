@@ -1,4 +1,40 @@
-import { buildShipment, shipmentQuantityError, type ShipmentInput } from './shipment';
+import { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from 'axios';
+
+import { apiClient } from './api';
+import {
+  buildShipment,
+  createShipment,
+  shipmentQuantityError,
+  type ShipmentInput,
+  type ShipmentPayload,
+} from './shipment';
+
+// `createShipment` traverse le vrai `apiClient` (intercepteurs réels, adaptateur stubé) : seules
+// les dépendances qui toucheraient le stockage natif sont mockées.
+jest.mock('./cache');
+jest.mock('./session', () => ({
+  getToken: jest.fn().mockResolvedValue('jwt-123'),
+  clearToken: jest.fn(),
+  saveToken: jest.fn(),
+  getUserId: jest.fn().mockResolvedValue('user-1'),
+  clearUserId: jest.fn(),
+  saveUserId: jest.fn(),
+}));
+jest.mock('expo-router', () => ({ router: { replace: jest.fn() } }));
+
+/** Stube la réponse HTTP en gardant les intercepteurs réels (cf. me.test.ts). */
+function stubResponse(status: number, data: unknown): void {
+  const adapter: AxiosAdapter = async (config: InternalAxiosRequestConfig) => {
+    const response = { data, status, statusText: '', headers: {}, config };
+    if (status >= 400) {
+      const error = new AxiosError('Request failed', undefined, config, null, response);
+      error.response = response;
+      throw error;
+    }
+    return response;
+  };
+  apiClient.defaults.adapter = adapter;
+}
 
 const VALID: ShipmentInput = {
   customerId: 'c-1',
@@ -107,5 +143,29 @@ describe('shipmentQuantityError', () => {
     // Contrairement à la transformation (`decimal([0, 2])`), le schéma d'expédition n'impose
     // aucune précision : inventer la contrainte refuserait une pesée légitime.
     expect(shipmentQuantityError('12.345', 100)).toBeNull();
+  });
+});
+
+// (issue #76) Le serveur sait générer un SSCC conforme GS1 quand on lui envoie `shipment_id: 'AUTO'`.
+// Il le renvoie dans le shipment créé — et c'est le SEUL endroit où l'opérateur peut l'apprendre.
+describe('createShipment', () => {
+  const PAYLOAD: ShipmentPayload = {
+    id_client: 'c-1',
+    shipment_id: 'AUTO',
+    transporteur: 'Transports Martin',
+    destination_adresse: '12 rue des Halles, 75001 Paris',
+    lots: [{ id_lot: 'b-1', quantite_expediee: 40 }],
+  };
+
+  it('remonte le n° d’expédition attribué par le serveur (SSCC généré pour « AUTO »)', async () => {
+    // Sans ce retour, la confirmation ne pourrait pas afficher le numéro : l'opérateur repartirait
+    // devant le camion sans savoir sous quel identifiant son expédition a été enregistrée.
+    stubResponse(201, {
+      status: 201,
+      message: 'Expédition créée avec succès',
+      data: { shipment: { shipment_id: '006141410000000157' } },
+    });
+
+    await expect(createShipment(PAYLOAD)).resolves.toBe('006141410000000157');
   });
 });

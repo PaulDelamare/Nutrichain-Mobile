@@ -102,6 +102,20 @@ export function buildShipment(input: ShipmentInput): ShipmentPayload | null {
   };
 }
 
-export async function createShipment(payload: ShipmentPayload): Promise<void> {
-  await apiClient.post('/api/logistics/shipments', payload);
+/** L'enveloppe de POST /api/logistics/shipments : le shipment créé, porteur de son n° FINAL. */
+interface CreateShipmentResponse {
+  data: { shipment: { shipment_id: string } };
+}
+
+/**
+ * Renvoie le n° d'expédition RÉELLEMENT enregistré. Quand `payload.shipment_id` vaut `'AUTO'`, le
+ * serveur génère un SSCC conforme GS1 : ce numéro n'existe qu'à partir de la réponse. Le remonter
+ * est le seul moyen pour l'opérateur d'apprendre sous quel identifiant son expédition est partie.
+ */
+export async function createShipment(payload: ShipmentPayload): Promise<string> {
+  const { data } = await apiClient.post<CreateShipmentResponse>(
+    '/api/logistics/shipments',
+    payload
+  );
+  return data.data.shipment.shipment_id;
 }
