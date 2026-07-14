@@ -30,6 +30,15 @@ export interface ReceiptPayload {
    * serait jamais mis en quarantaine si son frigo dérive.
    */
   id_materiel?: string;
+  /**
+   * Numéro de lot du fournisseur, décodé de l'étiquette scannée (GS1 AI 10, ≤ 20 caractères,
+   * charset serveur [A-Za-z0-9._-]). Absent, le serveur en génère un — mais alors la palette
+   * rescannée redevient un lot inconnu. C'est la clé qui permet de la retrouver.
+   */
+  lot_number?: string;
+  /** DLC du fournisseur décodée de l'étiquette (GS1 AI 17), au format `YYYY-MM-DD`. Absente, le
+   *  serveur retombe sur la durée de conservation par défaut du produit. */
+  date_peremption?: string;
 }
 
 export interface QueuedOperation {
