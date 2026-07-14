@@ -2,7 +2,7 @@ import { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from '
 
 import { apiClient } from '../api';
 import { getToken, getUserId } from '../session';
-import { getPendingOperations, saveOperationUpdates } from './queue';
+import { getPendingOperations, resetBackoff, saveOperationUpdates } from './queue';
 import { MAX_BATCH_SIZE, syncPendingOperations } from './sync';
 import type { SendableOperation } from './types';
 
@@ -18,7 +18,7 @@ jest.mock('../session', () => ({
 }));
 jest.mock('expo-router', () => ({ router: { replace: jest.fn() } }));
 
-const queue = jest.mocked({ getPendingOperations, saveOperationUpdates });
+const queue = jest.mocked({ getPendingOperations, resetBackoff, saveOperationUpdates });
 const mockedGetUserId = jest.mocked(getUserId);
 const mockedGetToken = jest.mocked(getToken);
 
@@ -501,5 +501,24 @@ describe('syncPendingOperations', () => {
     const summary = await syncPendingOperations();
 
     expect(summary).toMatchObject({ retried: 1, rejected: 1 });
+  });
+  it('un appui HUMAIN efface le délai du backoff avant de lire la file', async () => {
+    // Sinon un scan repoussé à +30 min n'est PAS renvoyé, et aucun appui ne le débloque : la file
+    // reste comptée « en attente », le bouton reste actif, et rien ne part. Le backoff protège
+    // l'API des relances automatiques, pas des gens.
+    queue.getPendingOperations.mockResolvedValue([]);
+
+    await syncPendingOperations({ manual: true });
+
+    expect(queue.resetBackoff).toHaveBeenCalled();
+  });
+
+  it('une synchronisation AUTOMATIQUE respecte le délai', async () => {
+    // C'est la raison d'être du backoff : un entrepôt entier qui reconnecte ne doit pas marteler l'API.
+    queue.getPendingOperations.mockResolvedValue([]);
+
+    await syncPendingOperations();
+
+    expect(queue.resetBackoff).not.toHaveBeenCalled();
   });
 });

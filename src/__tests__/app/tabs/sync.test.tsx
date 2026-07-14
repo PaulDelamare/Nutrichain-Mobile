@@ -172,6 +172,35 @@ describe('la synchronisation ne peut plus échouer en silence', () => {
     );
   });
 
+  it('ne FÉLICITE plus l’opérateur quand rien n’est parti', async () => {
+    // Le toast était VERT dès que `blocked === 0`, quel que soit `synced`. Hors réseau, tout
+    // repartait en attente et l'opérateur lisait « 0 opération(s) synchronisée(s) » sur fond vert.
+    // Vert veut dire « c'est passé », pour tout le monde.
+    mockedSync.mockResolvedValue({ sent: 3, synced: 0, conflicts: 0, rejected: 0, retried: 3 });
+
+    render(<SyncScreen />);
+    await waitFor(() => expect(screen.getByText('Synchroniser maintenant')).toBeTruthy());
+    fireEvent.press(screen.getByText('Synchroniser maintenant'));
+
+    await waitFor(() =>
+      expect(mockedToast.show).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', text1: 'Aucune opération n’a pu partir' })
+      )
+    );
+  });
+
+  it('un appui humain court-circuite le délai du backoff', async () => {
+    // Après quelques échecs, le backoff repousse les scans jusqu'à +30 min : ils restaient comptés
+    // « en attente », le bouton restait actif, et AUCUN appui ne les débloquait.
+    mockedSync.mockResolvedValue({ sent: 2, synced: 2, conflicts: 0, rejected: 0, retried: 0 });
+
+    render(<SyncScreen />);
+    await waitFor(() => expect(screen.getByText('Synchroniser maintenant')).toBeTruthy());
+    fireEvent.press(screen.getByText('Synchroniser maintenant'));
+
+    await waitFor(() => expect(mockedSync).toHaveBeenCalledWith({ manual: true }));
+  });
+
   it('AVOUE ne pas avoir pu lire la file, au lieu d’annoncer « tout est synchronisé »', async () => {
     // Une liste vide ne veut pas dire « tout va bien » : elle peut aussi vouloir dire « je n'ai pas
     // pu lire la base ». C'est le pire message possible à afficher dans ce cas.

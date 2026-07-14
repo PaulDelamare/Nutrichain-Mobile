@@ -2,7 +2,7 @@ import { apiClient } from '../api';
 import { ApiError } from '../errors';
 import { getToken, getUserId } from '../session';
 import { rejectOutcome, resolveOutcome, retryOutcome } from './outcome';
-import { getPendingOperations, saveOperationUpdates } from './queue';
+import { getPendingOperations, resetBackoff, saveOperationUpdates } from './queue';
 import type { OperationUpdate, QueuedOperation, SyncItemResult } from './types';
 
 /**
@@ -198,13 +198,26 @@ async function syncBatch(
  * Un verrou global empêche deux synchronisations concurrentes (bouton pressé deux fois,
  * retour du réseau pendant une sync manuelle) d'envoyer le même lot en double.
  */
-export async function syncPendingOperations(): Promise<SyncSummary> {
+export interface SyncOptions {
+  /**
+   * L'opérateur a appuyé lui-même sur « Synchroniser ». On efface alors le délai d'attente du
+   * backoff : sans ça, un scan repoussé à +30 min n'était PAS renvoyé, et aucun appui humain ne
+   * pouvait le débloquer. Le backoff protège l'API des relances automatiques, pas des gens.
+   */
+  manual?: boolean;
+}
+
+export async function syncPendingOperations(options: SyncOptions = {}): Promise<SyncSummary> {
   if (running) {
     return summarize([]);
   }
   running = true;
 
   try {
+    if (options.manual) {
+      await resetBackoff();
+    }
+
     let total = summarize([]);
 
     // L'opérateur est épinglé pour toute la durée de la synchronisation : c'est LUI dont les scans

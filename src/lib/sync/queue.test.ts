@@ -20,6 +20,7 @@ import {
   listOperations,
   purgeSyncedBefore,
   requeueOperation,
+  resetBackoff,
   saveOperationUpdates,
 } from './queue';
 import type { OperationStatus, ReceiptPayload } from './types';
@@ -98,6 +99,56 @@ function corrupt(clientOpId: string) {
     .prepare('UPDATE operations SET payload = ? WHERE client_op_id = ?')
     .run('{"shipment_id": "SHIP-0', clientOpId);
 }
+
+describeWithSqlite('un appui humain ne doit pas être ignoré par le backoff', () => {
+  beforeEach(() => {
+    engine = new DatabaseSync(':memory:');
+    engine.exec(SCHEMA);
+    mockUserId = 'operateur-A';
+  });
+
+  /** Simule un scan repoussé par le backoff (jusqu'à +30 min après quelques échecs). */
+  function delayUntil(clientOpId: string, timestamp: number) {
+    engine
+      .prepare('UPDATE operations SET next_attempt_at = ? WHERE client_op_id = ?')
+      .run(timestamp, clientOpId);
+  }
+
+  it('un scan repoussé par le backoff n’est PAS renvoyé tant que son délai court', async () => {
+    // Le comportement voulu en arrière-plan : ne pas marteler l'API.
+    const op = await enqueueReceipt(PAYLOAD);
+    delayUntil(op, NOW + 30 * 60_000);
+
+    expect(await getPendingOperations(NOW, 50)).toHaveLength(0);
+  });
+
+  it('effacer le délai le rend immédiatement renvoyable', async () => {
+    // Sans ça, l'opérateur pouvait appuyer vingt fois sur « Synchroniser maintenant » : la file
+    // restait comptée « en attente », le bouton restait actif, et rien ne partait — pendant 30 min.
+    const op = await enqueueReceipt(PAYLOAD);
+    delayUntil(op, NOW + 30 * 60_000);
+
+    await resetBackoff();
+
+    expect((await getPendingOperations(NOW, 50)).map((o) => o.clientOpId)).toEqual([op]);
+  });
+
+  it('n’efface QUE le délai de ses propres scans en attente', async () => {
+    const mien = await enqueueReceipt(PAYLOAD);
+    delayUntil(mien, NOW + 30 * 60_000);
+
+    mockUserId = 'operateur-B';
+    const sien = await enqueueReceipt(PAYLOAD);
+    delayUntil(sien, NOW + 30 * 60_000);
+
+    mockUserId = 'operateur-A';
+    await resetBackoff();
+
+    // Le scan de B reste sous son délai : ce n'est pas à A d'en décider.
+    mockUserId = 'operateur-B';
+    expect(await getPendingOperations(NOW, 50)).toHaveLength(0);
+  });
+});
 
 describeWithSqlite('une ligne illisible ne doit pas emporter la file entière', () => {
   beforeEach(() => {

@@ -259,6 +259,29 @@ export async function getPendingOperations(
   return operations.filter((op): op is SendableOperation => op.payload !== null);
 }
 
+/**
+ * Rend immédiatement rejouables les scans de l'opérateur, en effaçant leur délai d'attente.
+ *
+ * ⚠️ Le backoff pousse `next_attempt_at` jusqu'à +30 min. Les opérations restaient comptées
+ * `PENDING` — le bouton « Synchroniser maintenant » était donc actif et l'accueil annonçait
+ * « 5 en attente » — mais `getPendingOperations` n'en renvoyait AUCUNE. L'opérateur pouvait appuyer
+ * vingt fois : rien ne partait, jamais, et il recevait un toast de succès.
+ *
+ * Une synchronisation manuelle est une DÉCISION HUMAINE : elle court-circuite le délai. Le backoff
+ * existe pour ne pas marteler l'API en arrière-plan, pas pour ignorer quelqu'un qui appuie.
+ */
+export async function resetBackoff(): Promise<void> {
+  const db = await getDatabase();
+  const userId = await getUserId();
+
+  if (!userId) return;
+
+  await db.runAsync(
+    `UPDATE operations SET next_attempt_at = 0 WHERE status = 'PENDING' AND user_id = ?`,
+    userId
+  );
+}
+
 export async function saveOperationUpdates(updates: OperationUpdate[]): Promise<void> {
   const db = await getDatabase();
 
