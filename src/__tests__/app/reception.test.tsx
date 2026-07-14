@@ -221,4 +221,46 @@ describe('écran de réception', () => {
     await waitFor(() => expect(screen.getByText('Ferme Dupont')).toBeTruthy());
     expect(screen.queryByText(/Aucun fournisseur accessible/i)).toBeNull();
   });
+
+  // ─── Erreurs de champ (issue #47) : plus de bouton gris muet ───────────────────────────────
+  // L'écran le plus utilisé restait le seul à laisser l'opérateur devant un bouton grisé sans lui
+  // dire quel champ le bloque — ce que transfo et expédition affichent déjà.
+
+  // BUG REPRODUIT : une quantité invalide grise le bouton SANS message. Échoue sur le code actuel.
+  it('affiche l’erreur sous la quantité au lieu d’un bouton gris muet', async () => {
+    render(<ReceptionScreen />);
+    await waitFor(() => expect(screen.getByText('Ferme Dupont')).toBeTruthy());
+
+    fireEvent.changeText(screen.getByPlaceholderText('0'), '0');
+    expect(screen.getByText(/supérieure à 0/i)).toBeTruthy();
+  });
+
+  it('affiche l’erreur sous un n° d’expédition trop court', async () => {
+    render(<ReceptionScreen />);
+    await waitFor(() => expect(screen.getByText('Ferme Dupont')).toBeTruthy());
+
+    fireEvent.changeText(screen.getByPlaceholderText('SHIP-2026-001'), 'AB');
+    expect(screen.getByText(/3 caractères/i)).toBeTruthy();
+  });
+
+  // CAS CORRECT : une saisie valide n'affiche AUCUNE erreur.
+  it('n’affiche aucune erreur pour une saisie valide', async () => {
+    render(<ReceptionScreen />);
+    await waitFor(() => expect(screen.getByText('Ferme Dupont')).toBeTruthy());
+
+    fireEvent.changeText(screen.getByPlaceholderText('0'), '12');
+    fireEvent.changeText(screen.getByPlaceholderText('SHIP-2026-001'), 'SHIP-1');
+    expect(screen.queryByText(/supérieure à 0/i)).toBeNull();
+    expect(screen.queryByText(/3 caractères/i)).toBeNull();
+  });
+
+  // NE PAS HARCELER : un champ encore vide n'affiche pas d'erreur (ce n'est pas une faute, c'est un
+  // champ pas encore rempli — comme transfo/expédition).
+  it('ne montre aucune erreur tant que les champs sont vides', async () => {
+    render(<ReceptionScreen />);
+    await waitFor(() => expect(screen.getByText('Ferme Dupont')).toBeTruthy());
+
+    expect(screen.queryByText(/supérieure à 0/i)).toBeNull();
+    expect(screen.queryByText(/caractères/i)).toBeNull();
+  });
 });

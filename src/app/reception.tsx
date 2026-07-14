@@ -29,7 +29,12 @@ import {
 import { LOT_NUMBER_MAX_LENGTH, normalizeGtin, parseScannedCode } from '@/lib/gs1';
 import { clearReceiptDraft, loadReceiptDraft, saveReceiptDraft } from '@/lib/draft';
 import { enqueueReceipt } from '@/lib/sync/queue';
-import { SHIPMENT_ID_MAX_LENGTH, buildReceipt } from '@/lib/sync/receipt';
+import {
+  SHIPMENT_ID_MAX_LENGTH,
+  buildReceipt,
+  receiptQuantityError,
+  receiptShipmentError,
+} from '@/lib/sync/receipt';
 import { syncPendingOperations } from '@/lib/sync/sync';
 import type { ReceiptPayload } from '@/lib/sync/types';
 import { BRAND, HEADER_GRADIENT } from '@/lib/theme';
@@ -240,6 +245,11 @@ export default function ReceptionScreen() {
     }).catch(() => undefined);
   }, [supplierId, productId, shipmentId, lotNumber, quantity, unit, status, location]);
 
+  // Le message exact sous le champ fautif, plutôt qu'un bouton grisé muet. Pas de harcèlement :
+  // un champ encore vide n'est pas une faute — on n'affiche qu'une fois quelque chose tapé.
+  const quantityIssue = quantity === '' ? null : receiptQuantityError(quantity);
+  const shipmentIssue = shipmentId === '' ? null : receiptShipmentError(shipmentId);
+
   // Écrit réellement la réception dans la file locale (chemin nominal, ou après confirmation de
   // quarantaine). Ferme la confirmation d'abord : elle a joué son rôle.
   const persistReceipt = async () => {
@@ -367,6 +377,7 @@ export default function ReceptionScreen() {
                 autoCapitalize="characters"
                 maxLength={SHIPMENT_ID_MAX_LENGTH}
               />
+              {shipmentIssue && <Text style={styles.error}>{shipmentIssue}</Text>}
             </View>
 
             <View style={styles.field}>
@@ -378,6 +389,7 @@ export default function ReceptionScreen() {
                 placeholder="0"
                 keyboardType="decimal-pad"
               />
+              {quantityIssue && <Text style={styles.error}>{quantityIssue}</Text>}
             </View>
 
             <OptionPicker
@@ -541,6 +553,8 @@ const styles = StyleSheet.create({
   locationPlace: { fontSize: 12, color: '#6B7280' },
   warning: { fontSize: 12, color: '#B45309' },
   missing: { fontSize: 12, color: '#B45309', lineHeight: 17, marginTop: -8, marginBottom: 4 },
+  // Le message sous le champ fautif, comme transfo/expédition : rouge, dire pourquoi le bouton grise.
+  error: { fontSize: 12, color: '#DC2626', fontWeight: '500' },
   // Donnée lue sur l'étiquette (verte = confirmée), pas saisie à la main ni supposée.
   dlcInfo: { fontSize: 12, color: '#047857', fontWeight: '600' },
   // Conséquence sanitaire lourde : fond ambré pour qu'elle ne se lise pas comme une note anodine.

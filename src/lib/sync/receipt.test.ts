@@ -1,4 +1,9 @@
-import { SHIPMENT_ID_MAX_LENGTH, buildReceipt } from './receipt';
+import {
+  SHIPMENT_ID_MAX_LENGTH,
+  buildReceipt,
+  receiptQuantityError,
+  receiptShipmentError,
+} from './receipt';
 
 const VALID = {
   supplierId: 'f-1',
@@ -94,5 +99,58 @@ describe('buildReceipt', () => {
       expect(receipt).not.toBeNull();
       expect(receipt).not.toHaveProperty('date_peremption');
     });
+  });
+});
+
+// ─── Messages d'erreur par champ (issue #47) : ne plus laisser un bouton gris muet ───────────
+describe('receiptQuantityError', () => {
+  it('exige un nombre lisible', () => {
+    expect(receiptQuantityError('abc')).toMatch(/nombre/i);
+    expect(receiptQuantityError('1,2,3')).toMatch(/nombre/i);
+  });
+
+  it('exige une quantité strictement positive', () => {
+    expect(receiptQuantityError('0')).toMatch(/supérieure à 0/i);
+    expect(receiptQuantityError('-3')).toMatch(/supérieure à 0/i);
+  });
+
+  it('accepte une quantité valide, virgule décimale française comprise', () => {
+    expect(receiptQuantityError('12')).toBeNull();
+    expect(receiptQuantityError('12,5')).toBeNull();
+  });
+});
+
+describe('receiptShipmentError', () => {
+  it('exige au moins 3 caractères', () => {
+    expect(receiptShipmentError('AB')).toMatch(/3 caractères/i);
+  });
+
+  it('refuse au-delà de la borne serveur', () => {
+    expect(receiptShipmentError('X'.repeat(SHIPMENT_ID_MAX_LENGTH + 1))).toMatch(/dépasser/i);
+  });
+
+  it('accepte un n° valide, espaces rognés', () => {
+    expect(receiptShipmentError('  SHIP-1  ')).toBeNull();
+  });
+});
+
+// Les messages et buildReceipt partagent la MÊME règle : un champ que le message signale fautif
+// doit rendre buildReceipt null, et inversement. Sinon l'écran mentirait (message sans bouton gris,
+// ou l'inverse).
+describe('les messages et buildReceipt ne divergent jamais', () => {
+  it('quantité invalide : message ET bouton grisé', () => {
+    expect(receiptQuantityError('0')).not.toBeNull();
+    expect(buildReceipt({ ...VALID, quantity: '0' })).toBeNull();
+  });
+
+  it('n° d’expédition trop court : message ET bouton grisé', () => {
+    expect(receiptShipmentError('AB')).not.toBeNull();
+    expect(buildReceipt({ ...VALID, shipmentId: 'AB' })).toBeNull();
+  });
+
+  it('saisie valide : aucun message, réception construite', () => {
+    expect(receiptQuantityError(VALID.quantity)).toBeNull();
+    expect(receiptShipmentError(VALID.shipmentId)).toBeNull();
+    expect(buildReceipt(VALID)).not.toBeNull();
   });
 });
