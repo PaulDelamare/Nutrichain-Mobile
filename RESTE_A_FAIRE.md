@@ -417,6 +417,52 @@ _« Et ensuite, le magasin fait quoi ? » → rien._ → **Gros.** _À défaut :
 
 ---
 
+## 10. Le scan — livré le 14/07, et ce qu'il a mis au jour
+
+**Fait et vérifié** (API #62, #64 + mobile #24) : scanner un lot déjà reçu ouvre **sa fiche**, plus
+un formulaire de réception. Vu à l'écran contre la vraie base.
+
+_Le fait qui commandait tout : **l'étiquette d'un lot imprimée par NutriChain n'encode pas son
+numéro, mais une URL GS1 Digital Link** (`…/gs1/01/{gtin}/10/{lot}`). Aucun code scanné n'était donc
+résoluble. « Scanner → fiche du lot » et « parsing GS1 » n'étaient pas deux chantiers : c'était le
+même._
+
+- [x] **La réception jetait le numéro de lot du fournisseur** (le serveur en générait un) → la même
+      palette rescannée était un lot **inconnu à jamais**, donc réceptionnée deux fois,
+      indéfiniment. (API #62.)
+- [x] **Aucun lot reçu n'avait de DLC** → la garde « lot périmé » était du code mort. Repli sur
+      `Product.duree_conservation_defaut`, qui existait et n'était lu nulle part. (API #62 — ferme
+      le §8.6.)
+- [x] **Résoudre un lot par son numéro** : `GET /logistics/batches/resolve`. (API #64.)
+- [x] **Le mobile décode le code scanné** (`src/lib/gs1.ts`) et l'étiquette d'un **matériel**
+      (`EQP-…`) n'ouvre plus une réception. (Mobile #24.)
+
+### 10.1 🔴 Ce qui reste ouvert sur le scan
+
+- [ ] **Au-delà de 100 lots, la transformation et l'expédition MENTENT.** Elles résolvent le code
+      **localement**, contre `GET /traceability/batches` — plafonné à `take: 100` côté serveur, sans
+      pagination ni recherche par numéro.
+      _Conséquence : un lot d'ingrédient à longue conservation (sucre, poudre de lait) créé il y a
+      plus de 100 lots est annoncé **« Lot inconnu — ce code ne correspond à aucun lot de votre
+      organisation »** devant le camion. C'est faux : le lot existe, il est en stock, son étiquette
+      est bonne. Et l'onglet Scan, lui, le trouve (il interroge le serveur). **Même étiquette, deux
+      réponses contradictoires selon l'écran.**_
+      → Replier sur `resolveBatch()` (qui existe déjà) quand la liste locale ne donne rien. **MOBILE.**
+
+- [ ] **La saisie manuelle est INACCESSIBLE tant que la caméra n'est pas autorisée.** L'écran de
+      permission remplace *tout* le contenu de l'onglet Scan.
+      _Conséquence : la saisie manuelle est le recours prévu quand le code est abîmé ou givré — mais
+      un opérateur qui a refusé la caméra ne peut même pas taper un numéro. L'app est morte pour
+      lui._ (Constaté en pilotant l'écran, pas par un test.) À traiter avec le trou `canAskAgain`
+      du §8.11. **MOBILE.**
+
+- [ ] **Le code scanné part encore brut dans le champ « N° d'expédition (SSCC) »** quand le lot est
+      inconnu : une URL Digital Link de 60 caractères y atterrit. Le GTIN, le numéro de lot et la
+      DLC sont **décodés puis jetés**, alors que l'API accepte `lot_number` et `date_peremption`
+      depuis #62. → Pré-remplir la réception. **MOBILE.**
+
+---
+
 ## 9. ⏯️ REPRENDRE ICI — 14/07/2026
 
 ### 9.1 🔵 Décisions qui attendent Paul (bloquantes pour la suite)

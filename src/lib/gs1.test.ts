@@ -96,6 +96,17 @@ describe('parseScannedCode', () => {
       expect(code.gtin).toBeNull();
     });
 
+    // Un numéro de lot ordinaire peut commencer par les mêmes chiffres qu'un identifiant GS1. Une
+    // valeur d'AI qui ne se parse pas PROUVE que ce n'était pas un element string : le prendre pour
+    // un AI malformé rendait un résultat « décodé mais vide », qui court-circuitait ce repli — et
+    // l'onglet Scan filait en réception au lieu de chercher le lot.
+    it.each([
+      ['une fausse DLC', '171231-ABC123'],
+      ['un faux GTIN', '01ABC-2026-XYZ'],
+    ])('rend tel quel un numéro de lot qui ressemble à %s', (_cas, code) => {
+      expect(parseScannedCode(code).lotNumber).toBe(code);
+    });
+
     it('rogne les espaces', () => {
       expect(parseScannedCode('  FRN-1  ').lotNumber).toBe('FRN-1');
     });

@@ -1,6 +1,7 @@
 import { apiClient } from './api';
 import { readCache, writeCache } from './cache';
 import { ApiError } from './errors';
+import { parseScannedCode } from './gs1';
 
 // ── Le catalogue des lots : ce qu'on scanne devant la cuve ou le camion ───────────────────────
 
@@ -73,17 +74,40 @@ export async function loadBatches(): Promise<Batch[]> {
   }
 }
 
-/** Résout localement l'étiquette d'un lot : aucun endpoint serveur ne le fait. */
+/**
+ * Résout un code scanné en lot, parmi ceux déjà chargés.
+ *
+ * L'étiquette qu'imprime NutriChain n'est pas le numéro de lot : c'est une URL GS1 Digital Link.
+ * Sans décodage, scanner notre propre marchandise devant la cuve ou le camion répondait
+ * « Lot inconnu ». Le décodage vit ICI, pas chez les appelants — le prochain écran qui scanne un
+ * lot l'oublierait.
+ *
+ * ⚠️ Le code BRUT est essayé en PREMIER, le décodé ensuite. Le brut est la vérité : c'est la clé
+ * de nos données. Le décodage n'est qu'une interprétation, et elle réécrit tout code commençant par
+ * un identifiant GS1 (`00`/`01`/`10`/`17`) — un lot fournisseur nommé « 10ABC » serait lu « ABC »,
+ * et l'app engagerait un AUTRE lot, sans la moindre erreur. Mauvaise marchandise en production,
+ * mauvais parent dans la traçabilité.
+ *
+ * ⚠️ Portée : `batches` ne contient que les 100 lots les plus récents (l'API plafonne). Un lot plus
+ * ancien est donc annoncé « inconnu » alors qu'il existe — voir RESTE_A_FAIRE. L'onglet Scan, lui,
+ * interroge le serveur (`resolveBatch`) et le trouve.
+ */
 export function findBatchByCode(code: string, batches: Batch[]): Batch | undefined {
-  const needle = code.trim().toLowerCase();
+  const raw = code.trim();
+  const decoded = parseScannedCode(code).lotNumber;
 
-  if (needle === '') {
-    return undefined;
+  const needles = [...new Set([raw, decoded].filter((value): value is string => Boolean(value)))];
+
+  for (const needle of needles.map((value) => value.toLowerCase())) {
+    const found = batches.find(
+      (batch) => batch.lot_number.toLowerCase() === needle || batch.id.toLowerCase() === needle
+    );
+    if (found) {
+      return found;
+    }
   }
 
-  return batches.find(
-    (batch) => batch.lot_number.toLowerCase() === needle || batch.id.toLowerCase() === needle
-  );
+  return undefined;
 }
 
 export function isUsableBatch(batch: Batch): boolean {
