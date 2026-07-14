@@ -8,65 +8,72 @@ Chaque ligne dit **la conséquence concrète** du manque, pas seulement son inti
 sans conséquence n'a rien à faire ici, elle ne sert qu'à se rassurer.
 
 Base : audit multi-agents du 11/07/2026 (49 agents, 30 constats bruts → 18 trous réels après
-vérification adversariale), **revérifié le 12/07** — sauf mention contraire, tout ce qui suit est
-encore ouvert aujourd'hui.
+vérification adversariale), **revérifié le 12/07**, **mis à jour le 13/07 au soir** — sauf mention
+contraire, tout ce qui suit est encore ouvert aujourd'hui.
 
 **Verdict global : l'API est plus complète que les interfaces.** Le patron qui revient sans cesse :
-*la donnée est indispensable au métier, mais personne ne peut la créer* ; et *l'endpoint existe,
-mais personne ne l'appelle*.
+_la donnée est indispensable au métier, mais personne ne peut la créer_ ; et _l'endpoint existe,
+mais personne ne l'appelle_.
 
 ---
 
-## 0. En attente de merge (plus rien à coder dessus)
+## 0. État au 13/07/2026 (soir) — **0 PR ouverte sur les 3 dépôts**
 
-- [ ] **`fix/tabbar-labels`** — libellés d'onglets rognés. Poussée, tests verts, vérifiée au rendu.
-- [ ] **`docs/reste-a-faire`** — ce document.
-- [ ] **`feat/transformation`** — transformation + expédition sur mobile. Poussée et verte, mais
-      **jamais ouverte en PR**, et désormais **en conflit avec `develop`** (Yoann a créé de son côté
-      un `src/lib/batches.ts` et étendu `alerts.ts`). À rebaser avant d'ouvrir.
+Tout est mergé. Ce qui a été livré le 13/07 (et qui coche des lignes plus bas) :
+
+- **Purge des données fabriquées** (front #13) — cf. §1 et §8.5, **fermé**.
+- **Historique complet du lot** + frise (API #56/#57, front #15) — cf. §2, **fermé**.
+- **Falsification d'identité sur la réception** (API #58) — cf. §8.1, **partiellement fermé**.
+- **Barrière qualité de sortie d'usine** (API #60, front #16, mobile #22) — cf. §1, **fermé**.
+- **Clé API durcie** (API #59, autre instance) — cf. §8.1, **fermé**.
+- **Seed par rôle + rejouable** (API #55, puis #60) — cf. §8.4 et §8.7, **fermé**.
 
 ---
 
 ## 1. 🔴 Bloquant avant la soutenance
 
-- [ ] **Le front ment sans jamais planter — les mocks passent dans la branche `source:'api'`.**
+- [x] **Le front ment sans jamais planter — les mocks passent dans la branche `source:'api'`.**
       `rappels-produits`, `chaine-du-froid`, `tableau-de-bord` et `/integrations` injectent des
       données fabriquées **dans la branche succès** de l'appel API, ce qui désactive le bandeau
       « données de démonstration ». Sur une base saine sans rappel en cours, le jury voit un faux
       « RAP-2025-014 — 78 % de confirmations » **présenté comme réel, sur la page cœur du livrable**,
       et des connecteurs « SAP S/4HANA / WMS Reflex / TMS » entièrement inventés.
-      *Conséquence : une donnée fausse, crédible, sans crash. Une seule question « c'est branché sur
-      quoi ? » et toute la démo perd sa crédibilité, y compris ce qui est vrai.*
+      _Conséquence : une donnée fausse, crédible, sans crash. Une seule question « c'est branché sur
+      quoi ? » et toute la démo perd sa crédibilité, y compris ce qui est vrai._
       → Purger les mocks, états vides honnêtes à la place. **~1-2 h. FRONT.**
+
+      ✅ **FAIT le 13/07** — front #13 : `src/lib/data/*`, `loadApiOrMock` et le champ `source` SUPPRIMÉS. La classe de bug est fermée, pas contournée. Vérifié à l'écran sur les 8 pages.
 
 - [ ] **Multi-tenancy : la transformation ne vérifie pas l'organisation de `id_materiel`.**
       Le produit fini et chaque lot parent sont contrôlés ; la cuve, non — elle part telle quelle
       dans `batch.create` et dans le `readPoint` EPCIS.
-      *Conséquence : un lot **produit fini** peut être rattaché au frigo d'un autre tenant et
+      _Conséquence : un lot **produit fini** peut être rattaché au frigo d'un autre tenant et
       **échappe alors définitivement à la quarantaine automatique** (le filtre IoT croise
-      `organization_id` + `id_materiel_actuel` : aucune des deux orgs ne correspond).*
+      `organization_id` + `id_materiel_actuel` : aucune des deux orgs ne correspond)._
       → Ajouter le `findFirst({ id, organization_id })` qui existe déjà côté réception. **API.**
 
-- [ ] **Barrière qualité de sortie d'usine : inexistante.** Trois pièces du même engrenage :
+- [x] **Barrière qualité de sortie d'usine : inexistante.** Trois pièces du même engrenage :
       le lot enfant d'une transformation naît **`EN_STOCK`** au lieu de quarantaine (donc
       immédiatement expédiable, **sans aucun contrôle**) ; `QualityControl` **n'est créable nulle
       part** (le rôle `quality` n'a aucune action de saisie dans tout le système) ; et les alertes
       ne sont clôturables par aucune UI web.
-      *Question jury garantie : « qui valide le produit fini avant expédition ? » → personne.*
+      _Question jury garantie : « qui valide le produit fini avant expédition ? » → personne._
       → 1 ligne pour le statut ; `POST /organization/quality-controls`. **API + FRONT.**
 
+      ✅ **FAIT le 13/07** — API #60 + front #16 + mobile #22. Statut `EN_ATTENTE_QC` (bloquant) ; `POST /organization/quality-controls` ; le contrôle pilote le statut du lot. ⚠️ Table d'états stricte : un contrôle conforme ne libère JAMAIS un lot sous rappel. Prouvé par `npm run e2e:quality-gate`.
+
 - [ ] **`Location` et `Supplier` ne sont créables nulle part** (aucun endpoint d'écriture).
-      *Conséquence, deux fois : `POST /organization/equipment` exige un lieu → **toujours 400** sur
+      _Conséquence, deux fois : `POST /organization/equipment` exige un lieu → **toujours 400** sur
       une org neuve, le correctif matériel est mort-né hors seed. Et la réception exige un
       fournisseur → **aucune réception possible** → pas de lot → pas de généalogie → pas de rappel.
-      Cul-de-sac total.*
+      Cul-de-sac total._
       → Dupliquer le patron `equipment.service.ts` (~70 lignes). **API (+ écran, cf. §3).**
 
 - [ ] **`Equipment.temp_actuelle` est affiché par le front mais écrit par PERSONNE.** Le ping IoT
       n'écrit que dans MongoDB.
-      *Conséquence : en démo, le frigo en excursion affichera **3,2 °C pendant l'alerte PANIC**. On
+      _Conséquence : en démo, le frigo en excursion affichera **3,2 °C pendant l'alerte PANIC**. On
       montre l'alerte et la quarantaine **sans jamais afficher la température coupable** — sur
-      l'écran phare de l'objectif SMART n°2.*
+      l'écran phare de l'objectif SMART n°2._
       → 5 lignes après le `TelemetryModel.create`. **Trivial. API.**
 
 - [ ] **La vitrine GS1/EPCIS est indémontrable.** Le seed démo écrit en direct via `prisma.*.create`
@@ -74,47 +81,48 @@ mais personne ne l'appelle*.
       vide et export CSV réduit à sa ligne d'en-têtes. `GET /traceability/events` n'a aucun
       consommateur. Et `GET /public/scan/:id` — la route consommateur, soignée — **n'a aucune page
       en face** : le QR renvoie du JSON brut.
-      *Conséquence : l'argument central du projet (traçabilité GS1) et la partie prenante B2C du
-      cahier des charges n'ont aucune surface visible. Le travail est fait, rien ne le prouve.*
-      → Semer les événements (ou mieux : faire appeler les services par le seed) + page `/evenements`
-      + page publique `/scan/[id]`. **API (seed) + FRONT.**
+      _Conséquence : l'argument central du projet (traçabilité GS1) et la partie prenante B2C du
+      cahier des charges n'ont aucune surface visible. Le travail est fait, rien ne le prouve._
+      → Semer les événements (ou mieux : faire appeler les services par le seed) + page `/evenements` + page publique `/scan/[id]`. **API (seed) + FRONT.**
 
 ## 2. 🟠 Important — si le temps le permet
 
 - [ ] **Un lot ne peut JAMAIS changer d'emplacement.** `id_materiel_actuel` n'est écrit qu'à la
       création. Aucun `move`, et le `qr_code_id` du matériel n'a **aucun lecteur**.
-      *Conséquence : la quarantaine automatique filtre sur une position qui cesse d'être vraie dès
+      _Conséquence : la quarantaine automatique filtre sur une position qui cesse d'être vraie dès
       le premier déplacement réel (quai → chambre froide → production) : faux négatifs sanitaires
-      ET faux positifs.* Non bloquant en démo (on place le lot dès la réception). **API + mobile.**
+      ET faux positifs._ Non bloquant en démo (on place le lot dès la réception). **API + mobile.**
 
 - [ ] **Étiquettes QR non imprimables.** Les endpoints `label` (lot et matériel) renvoient un PNG et
       n'ont **aucun appelant**. Or le mobile ne peut renseigner l'emplacement d'un lot **que** par
       scan de l'étiquette du frigo.
-      *Conséquence : la boucle « je crée un frigo → j'imprime → je scanne » ne fonctionne pas.*
+      _Conséquence : la boucle « je crée un frigo → j'imprime → je scanne » ne fonctionne pas._
       **Petit. FRONT.**
 
 - [ ] **Réceptions : aucun lien Batch ↔ Receipt ↔ Supplier.** Le service crée la réception puis le
       lot dans la même transaction **sans jamais les relier** (pas de clé étrangère).
-      *Conséquence : le récit « je remonte du produit fini jusqu'à la ferme » **s'arrête au lot de
+      _Conséquence : le récit « je remonte du produit fini jusqu'à la ferme » **s'arrête au lot de
       lait cru**. La maquette du cahier des charges montre pourtant « AMONT — Lait cru — Ferme Les
-      Aubépines ».* **API + FRONT.**
+      Aubépines »._ **API + FRONT.**
 
-- [ ] **`Batch_Mouvement` n'est pas écrit à la réception, ni aux quarantaines, ni au rappel** (que
+- [x] **`Batch_Mouvement` n'est pas écrit à la réception, ni aux quarantaines, ni au rappel** (que
       sur transformation et expédition).
-      *Conséquence : **un lot reçu et non transformé a un historique VIDE** à l'écran, et une
-      quarantaine IoT ou un rappel n'y laisse aucune ligne — c'est exactement le scénario de démo.*
+      _Conséquence : **un lot reçu et non transformé a un historique VIDE** à l'écran, et une
+      quarantaine IoT ou un rappel n'y laisse aucune ligne — c'est exactement le scénario de démo._
       (Nuance : l'audit WORM et les EPCIS sont bien écrits ; c'est l'historique **matière** affiché
       qui est incomplet.) → 3 lignes × 4 endroits. **API.**
 
+      ✅ **FAIT le 13/07** — API #56/#57. RECEPTION, QUARANTAINE_FROID (avec la CAUSE), LEVEE_QUARANTAINE (motif), RAPPEL, CONTROLE_QUALITE. Frise sur la fiche lot (front #15). ⚠️ Non rétroactif : les lots créés avant n'ont pas de trace.
+
 - [ ] **Chaîne du froid sans courbe.** `GET /telemetry/:sensor_id/history` n'est affiché nulle part.
-      *Conséquence : la démo la plus spectaculaire (pic → alerte → lot bloqué) ne montre **que
-      l'effet, jamais la cause**.* Quasi gratuit : le `sensor_id` est déjà renvoyé. **FRONT.**
+      _Conséquence : la démo la plus spectaculaire (pic → alerte → lot bloqué) ne montre **que
+      l'effet, jamais la cause**._ Quasi gratuit : le `sensor_id` est déjà renvoyé. **FRONT.**
 
 - [ ] **Rebut : impossible de sortir un lot du stock.** `ScrapRecord` n'a aucune occurrence, et un
       lot rappelé (statut `ALERTE`) ne peut plus être ni transformé, ni expédié, ni levé de
       quarantaine → **cul-de-sac définitif**, sa quantité reste aux livres indéfiniment.
-      *« Que deviennent les lots rappelés ? » → aucune preuve de destruction opposable à la
-      DGCCRF.* **API.**
+      _« Que deviennent les lots rappelés ? » → aucune preuve de destruction opposable à la
+      DGCCRF._ **API.**
 
 ## 3. Rôles et création de données — le modèle qu'on doit tenir
 
@@ -142,7 +150,7 @@ marchandise.
       fournisseur, matériel + import CSV) fermerait aussi plusieurs trous du §1 et du §2. **FRONT.**
 - [ ] **Rejouer les parcours avec CHAQUE rôle.** Le seed connecte un `owner`, qui a tous les droits :
       **il masque tous les 403**. Tant qu'un `operator` n'a pas été testé sur la réception (autorisée)
-      et sur la levée de quarantaine (refusée), on ne *sait* pas que le cloisonnement tient.
+      et sur la levée de quarantaine (refusée), on ne _sait_ pas que le cloisonnement tient.
 
 ## 4. Mobile — bugs constatés
 
@@ -170,7 +178,7 @@ marchandise.
       proposé indéfiniment sur un téléphone non resynchronisé. Dette connue, non bloquante.
 - [ ] **Idempotence de la transformation.** L'endpoint n'a **aucune clé** : si le réseau coupe
       pendant l'envoi, le serveur peut avoir commité sans que le mobile le sache. Mitigé côté mobile
-      (on annonce un statut *inconnu*, jamais un échec), mais la vraie correction est un
+      (on annonce un statut _inconnu_, jamais un échec), mais la vraie correction est un
       `client_op_id` côté API, comme pour la réception.
 - [ ] **`shipment_id` est `@unique` globalement**, pas par organisation : une org ne peut pas
       réutiliser un n° de transport qu'une autre a pris. **API.**
@@ -182,16 +190,16 @@ marchandise.
 
 - **Garde-fou de bilan matière (`RecipeComposition`)** — rien n'empêche de déclarer 1000 L de yaourt
   à partir de 1 L de lait. Le modèle est **inexploitable en l'état** (pas d'`organization_id`, et
-  l'ingrédient ne référence aucune table). *Discours : « modélisé, implémentation en V2 — nous
-  n'avons pas voulu livrer une version fausse. »*
+  l'ingrédient ne référence aucune table). _Discours : « modélisé, implémentation en V2 — nous
+  n'avons pas voulu livrer une version fausse. »_
 - **Maintenance / hygiène HACCP** — table 100 % morte. On peut transformer dans une cuve jamais
-  nettoyée. Aucune règle existante n'en dépend. *Discours : extension V2 — **et la retirer de l'ERD
+  nettoyée. Aucune règle existante n'en dépend. _Discours : extension V2 — **et la retirer de l'ERD
   projeté**, ou l'y marquer hors périmètre. Un jury pardonne un périmètre assumé, pas une table
-  fantôme.*
+  fantôme._
 - **Historique thermique du camion** — jamais écrit, aucun canal d'entrée ; `statut_controle` est
-  **déclaré par le client** et recopié tel quel. *Nuance : le blocage fonctionne, c'est la preuve
+  **déclaré par le client** et recopié tel quel. _Nuance : le blocage fonctionne, c'est la preuve
   thermique qui manque. Si on a une heure : `detectExcursion()` est **déjà écrite et testée**, il
-  suffit de l'appeler.*
+  suffit de l'appeler._
 - **`PerformanceStat`** — table morte, aucun enjeu. À retirer de l'ERD.
 
 ## 7. Soutenance / livrables
@@ -233,15 +241,15 @@ Second audit multi-agents (8 angles, chaque trouvaille passée devant un agent c
 donc livrée au navigateur). Et dans `mixedAuth.ts` :
 
 ```ts
-if (req.headers['x-api-key'] && !hasUserSession(req)) {
-  return checkApiKey()(req, res, ensureOrg);   // allowedRoles n'est JAMAIS évalué
+if (req.headers["x-api-key"] && !hasUserSession(req)) {
+  return checkApiKey()(req, res, ensureOrg); // allowedRoles n'est JAMAIS évalué
 }
 ```
 
-*Conséquence : un `git clone` + un `curl`, **sans aucun compte**, permet d'écrire des réceptions,
+_Conséquence : un `git clone` + un `curl`, **sans aucun compte**, permet d'écrire des réceptions,
 des expéditions, des scans, des trames capteur, et de lire l'annuaire nominatif des salariés (donnée
 personnelle → enjeu DPIA). C'est borné à l'organisation de la clé — pas de cross-tenant — mais c'est
-exploitable en trente secondes, et c'est la réponse à « où sont vos secrets ? ».*
+exploitable en trente secondes, et c'est la réponse à « où sont vos secrets ? »._
 → Refuser la branche clé API quand `allowedRoles` n'est pas vide ; régénérer la clé ; `.env.example`
 factice. **API + INFRA. ~1 h.**
 
@@ -250,14 +258,14 @@ module sync, qui fait le bon contrôle, n'a jamais été copié dans la récepti
 
 ### 8.2 🔴 La chaîne d'audit WORM peut se rompre — devant le jury
 
-L'écriture n'est pas sérialisée : le `SELECT … FOR UPDATE` verrouille la *dernière ligne existante*,
+L'écriture n'est pas sérialisée : le `SELECT … FOR UPDATE` verrouille la _dernière ligne existante_,
 il n'empêche pas un INSERT concurrent de lire le même maillon. Aucun index unique sur
 `(organization_id, prev_hash)`, aucune reprise sur erreur de sérialisation, aucun test de
 concurrence. Pire : la création de matériel journalise **hors transaction**.
 
-*Conséquence : un ping IoT pendant une synchronisation, et la chaîne **forke définitivement** → le
+_Conséquence : un ping IoT pendant une synchronisation, et la chaîne **forke définitivement** → le
 bouton « vérifier l'intégrité de l'audit », qu'on a mis au front, affiche **« chaîne rompue »**, sur
-l'objectif 7, sans réparation possible (c'est du WORM).*
+l'objectif 7, sans réparation possible (c'est du WORM)._
 → Verrou consultatif par organisation + reprise + la transaction manquante. **API. Petit.**
 
 ### 8.3 🔴 Rien n'est déployé, et les portes de qualité de la CI sont fictives
@@ -274,8 +282,8 @@ l'objectif 7, sans réparation possible (c'est du WORM).*
 - Aucun environnement déployé, aucune URL, aucun rollback. Or le dossier coche « CI/CD
   industrielle ✅ ».
 
-*Conséquence : « Montrez l'environnement, quel commit tourne, comment vous revenez en arrière ? » —
-sans réponse, sur une ligne cochée.*
+_Conséquence : « Montrez l'environnement, quel commit tourne, comment vous revenez en arrière ? » —
+sans réponse, sur une ligne cochée._
 
 ### 8.4 🔴 Aucun compte `operator` / `quality` / `viewer` n'existe, et on ne peut pas en créer
 
@@ -283,20 +291,20 @@ Le seed crée **un seul** utilisateur, **sans mot de passe** (aucune ligne `Acco
 même pas se connecter. Le seul chemin d'inscription passe par une invitation dont le mail part vers
 une boîte factice, dont le front **jette le jeton**, et qu'aucune route ne permet de relister.
 
-*Conséquence : le « rejouer les parcours avec chaque rôle » du §3 est **matériellement impossible**.
-« Connectez-vous en opérateur » → il n'y a pas de compte opérateur.*
+_Conséquence : le « rejouer les parcours avec chaque rôle » du §3 est **matériellement impossible**.
+« Connectez-vous en opérateur » → il n'y a pas de compte opérateur._
 → Trois `upsert` avec une ligne `Account` dans le seed. **API. 30 min — et ça débloque trois autres
 trous.**
 
-### 8.5 🔴 La purge des mocks prévue au §1 ne suffira pas : les faux chiffres sont dans les *mappers*
+### 8.5 🔴 La purge des mocks prévue au §1 ne suffira pas : les faux chiffres sont dans les _mappers_
 
 Le « 78 % de confirmations » n'est **pas** dans les fichiers de mock : il est écrit en dur dans le
 mapper des **données réelles** (`progress: a.statut === 'ACTIVE' ? 78 : 100`). Idem pour le brief du
 Portail magasins et une étape fantôme de l'arbre de traçabilité.
 
-*Conséquence : supprimer `src/lib/data/*` **compile parfaitement** et laisse tout en place. Le jour J,
+_Conséquence : supprimer `src/lib/data/*` **compile parfaitement** et laisse tout en place. Le jour J,
 un rappel réellement déclenché affichera encore « Retrait rayon — 78 % », **sous le bandeau « données
-issues de la base »**. Le vrai périmètre de purge est `mappers.ts`.*
+issues de la base »**. Le vrai périmètre de purge est `mappers.ts`._
 
 Et le badge **« 3 alertes froid » du header est une valeur par défaut en dur**, affichée sur **toutes
 les pages, en permanence** — avant comme après l'excursion. Ce n'est pas un mock de page : la purge
@@ -326,8 +334,8 @@ Chaîne du froid et Rappels sont vides). Les identifiants de connexion ne sont d
 Le seed crée un utilisateur **non connectable**, et toute inscription ultérieure est refusée en 403.
 Deux scripts cités dans le code **n'existent pas** dans `package.json`.
 
-*Conséquence : un correcteur qui clone et suit le Readme obtient une base vide et **ne peut pas se
-connecter**. Le livrable « projet reproductible » tombe.* → **DOCS. Trivial.**
+_Conséquence : un correcteur qui clone et suit le Readme obtient une base vide et **ne peut pas se
+connecter**. Le livrable « projet reproductible » tombe._ → **DOCS. Trivial.**
 
 ### 8.9 🔴 La boucle du rappel ne se ferme jamais
 
@@ -336,7 +344,7 @@ Le barème du POC mobile exige « scan → vérifier le lot → **marquer le ret
 n'affiche que deux compteurs, alors que le menu promet « confirmations »). Le cahier des charges pose
 pourtant un KPI « taux de rappel complété > 90 % » : il n'a **aucune source de données**.
 
-*« Et ensuite, le magasin fait quoi ? » → rien.* → **Gros.** *À défaut : l'assumer explicitement.*
+_« Et ensuite, le magasin fait quoi ? » → rien._ → **Gros.** _À défaut : l'assumer explicitement._
 
 ### 8.10 🟠 Les trous importants (résumé)
 
@@ -377,11 +385,11 @@ pourtant un KPI « taux de rappel complété > 90 % » : il n'a **aucune source 
 - [ ] **Caméra refusée définitivement** : le bouton « Autoriser l'accès » devient un **no-op
       silencieux** (`canAskAgain` n'est jamais lu, aucun renvoi vers les réglages).
 - [ ] **Scanner un lot existant ouvre un formulaire de réception** : le geste le plus évident de la
-      démo n'affiche jamais la fiche du lot. *(Nécessite aussi un endpoint de recherche de lot par
-      code, qui n'existe pas.)*
+      démo n'affiche jamais la fiche du lot. _(Nécessite aussi un endpoint de recherche de lot par
+      code, qui n'existe pas.)_
 - [ ] **Choisir « ALERTE » ou « NONCONFORME » à la réception met le lot en quarantaine sans le
       dire** — décision sanitaire lourde, irréversible depuis le terrain, déclenchée par une puce
-      anodine. *(Et `CONFORME` est une quatrième valeur pour trois états, qui ne sert à rien.)*
+      anodine. _(Et `CONFORME` est une quatrième valeur pour trois états, qui ne sert à rien.)_
 
 ---
 
@@ -392,17 +400,82 @@ pourtant un KPI « taux de rappel complété > 90 % » : il n'a **aucune source 
 - [x] Réception avec emplacement du lot (double scan : le lot, puis le frigo).
 - [x] Création de matériel + étiquette QR (`POST /organization/equipment`, `GET .../label`).
 - [x] Authentification mobile — la fuite **inter-organisation** par `x-api-key` corrigée à la
-      racine. *(Le contournement de rôle **intra-organisation**, lui, reste entier : cf. §8.1.)*
+      racine. _(Le contournement de rôle **intra-organisation**, lui, reste entier : cf. §8.1.)_
 - [x] Décision d'alerte froid sur mobile (Yoann, PR #12).
 - [x] CI mobile : lint, typecheck, tests **et build** — c'est le build qui avait rattrapé
       l'application qui ne démarrait plus.
 
 ### Deux lignes décochées le 12/07 — elles étaient fausses
 
-- [ ] ~~« `received_by` n'est plus falsifiable »~~ — **faux**. Corrigé sur le chemin *session*
+- [ ] ~~« `received_by` n'est plus falsifiable »~~ — **faux**. Corrigé sur le chemin _session_
       uniquement. En mode clé API il n'y a pas de `req.auth.user`, donc **l'auteur retombe sur le
-      corps de la requête**, et le service ne vérifie que l'*existence* de l'utilisateur, jamais son
+      corps de la requête**, et le service ne vérifie que l'_existence_ de l'utilisateur, jamais son
       appartenance à l'organisation. L'identité scellée dans l'audit WORM reste choisie par le
       client. Voir §8.1.
 - [ ] ~~« l'audit WORM et les EPCIS sont bien écrits »~~ — **à ne plus tenir pour acquis** : la
       chaîne d'audit n'est pas sérialisée et n'a aucune contrainte en base. Voir §8.2.
+
+---
+
+## 9. ⏯️ REPRENDRE ICI — 14/07/2026
+
+### 9.1 🔵 Décisions qui attendent Paul (bloquantes pour la suite)
+
+- [ ] **La séparation des tâches HACCP n'est PAS tenue.** `owner` et `admin` sont à la fois dans
+      `WRITE_ROLES` (ils transforment) et dans `QUALITY_ROLES` (ils valident) : ils peuvent donc
+      **valider leur propre production**. La barrière qualité a été livrée en le revendiquant —
+      c'était faux.
+      _Deux issues : l'assumer devant le jury (« axe d'amélioration »), ou refuser qu'un contrôle
+      soit signé par l'auteur de la transformation (~4 lignes dans la même transaction)._
+- [ ] **`/integrations`** : la page a un état vide honnête. **Décision de Paul : la brancher sur le
+      vrai module `connectors`** de l'API (import CSV produits/clients + export EPCIS). À faire.
+- [ ] **Le dossier `nutrichain-api-wt-histo`** est abîmé (worktree supprimé à moitié) et inutile.
+      **Ne pas le supprimer sans l'accord de Paul.**
+
+### 9.2 🔴 Le meilleur rapport effort/effet qui reste
+
+- [ ] **`Equipment.temp_actuelle` n'est écrite par PERSONNE** (le ping IoT n'écrit que dans Mongo).
+      _Conséquence : en démo, le frigo affiche **3,2 °C pendant l'alerte PANIC**. On montre l'alerte
+      et la quarantaine **sans jamais afficher la température coupable** — sur l'écran phare de
+      l'objectif SMART n°2._ **~5 lignes. API.** ← _le meilleur coup suivant_
+
+### 9.3 Trous découverts le 13/07 (nouveaux)
+
+- [ ] **`resolveLotMapLocation` fabrique des coordonnées GPS** par regex sur le NOM du site
+      (« Loire » → pin de Nantes), et les marque **`precise: true`**. Le pin de la fiche lot est
+      donc inventé, sous un bandeau « Données en direct depuis la base ». **PR séparée (décision
+      Paul). FRONT (+ API si on veut de vraies coordonnées sur `Location`).**
+- [ ] **Le panneau « Lots en quarantaine » affiche l'UUID brut** du lot au lieu de son numéro :
+      `GET /organization/quarantine-batches` ne renvoie pas `lot_number`. **Petite PR API.**
+- [ ] **L'historique n'est pas rétroactif** : les lots créés avant le 13/07 n'ont aucune trace de
+      réception. Pour une démo propre, **recevoir un lot neuf** (ou reseeder).
+
+### 9.4 ⚠️ Pièges d'environnement (vécus, coûteux)
+
+- **`tsx` sans `watch` garde le code en mémoire.** Après un merge/rebase, **REDÉMARRER l'API** —
+  sinon on teste l'ancien code. _Vécu : le bug d'horodatage semblait non corrigé alors que le
+  correctif était mergé ; deux heures d'écart affichées sur la frise, pour un serveur périmé._
+- **La clé API a été TOURNÉE** (API #59). Les trois `.env` doivent être alignés. Le front l'a été
+  (sauvegarde `.env.bak`) ; **vérifier le mobile**.
+- **Les scripts e2e écrivent dans la base de DEV.** Un run planté a laissé **2008 lots** dans la
+  base de démo (purgés après accord de Paul). **Toujours vérifier `prisma.batch.count()` après un
+  e2e.**
+- **Les tests unitaires mockent `$queryRaw`** : ils ne prouvent RIEN sur le SQL. Seuls les e2e le
+  font.
+
+### 9.5 🧭 La méthode qui a payé (ne pas la lâcher)
+
+**Faire RÉFUTER le plan AVANT d'écrire une ligne.** Le 13/07, sur trois plans successifs :
+
+- la purge des mocks : mon plan **crashait 2 pages en 500** et **ratait la pire fabrication** (le
+  donut qualité déclarait conformes tous les lots jamais contrôlés) ;
+- l'historique du lot : mon plan pouvait **faire ROLLBACK un rappel produit** (plafond de 65535
+  paramètres liés de PostgreSQL) — soit zéro lot bloqué, la pire issue sanitaire ;
+- la barrière qualité : mon plan **annulait les rappels produits** (un contrôle conforme libérait un
+  lot rappelé) **et ouvrait un trou dans la chaîne du froid** (le lot en attente échappait à
+  l'excursion thermique).
+
+**Trois prémisses fausses par plan, en moyenne.** Et l'écran trouve ce qu'aucun test ne donne :
+le badge « 1 alertes », le décalage de +2 h, la réception affichée en vert alors qu'elle était non
+conforme. ⚠️ **Un scanner automatique doit échouer bruyamment** : le mien a annoncé « aucun
+mensonge détecté »… sur une page de connexion.
