@@ -5,7 +5,20 @@
  * son comportement en base qu'on vérifie — pas la forme d'une requête.
  */
 import { SCHEMA } from './db';
-import { clearReceiptDraft, loadReceiptDraft, saveReceiptDraft, type ReceiptDraft } from './draft';
+import {
+  clearReceiptDraft,
+  clearShipmentDraft,
+  clearTransformationDraft,
+  loadReceiptDraft,
+  loadShipmentDraft,
+  loadTransformationDraft,
+  saveReceiptDraft,
+  saveShipmentDraft,
+  saveTransformationDraft,
+  type ReceiptDraft,
+  type ShipmentDraft,
+  type TransformationDraft,
+} from './draft';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let DatabaseSync: any = null;
@@ -121,5 +134,125 @@ describeWithSqlite('brouillon de réception', () => {
     engine.prepare("UPDATE drafts SET value = '{cassé' WHERE user_id = ?").run('operateur-A');
 
     await expect(loadReceiptDraft()).resolves.toBeNull();
+  });
+});
+
+// (issue #73) Transformation et expédition n'avaient AUCUN brouillon : une cuve scannée, six lots
+// parents, le client, le n° de transport — tout partait sur un 401. On étend le mécanisme.
+
+const TRANSFO_DRAFT: TransformationDraft = {
+  cuve: { id: 'cuve-1', nom: 'Cuve A', type: 'CUVE', qr_code_id: null, lieu: { nom: 'Atelier' } },
+  parents: [
+    {
+      batch: {
+        id: 'b1',
+        lot_number: 'L1',
+        statut: 'EN_STOCK',
+        quantite_actuelle: '100',
+        unite_code: 'kg',
+        date_peremption: null,
+        produit: { nom: 'Lait cru' },
+      },
+      quantity: '30',
+      exhausted: false,
+    },
+  ],
+  productId: 'p-1',
+  quantity: '25',
+};
+
+const SHIP_DRAFT: ShipmentDraft = {
+  customerId: 'c-1',
+  shipmentId: 'EXP-001',
+  carrier: 'DHL',
+  address: '1 rue de la Ferme',
+  lots: [
+    {
+      batch: {
+        id: 'b2',
+        lot_number: 'L2',
+        statut: 'EN_STOCK',
+        quantite_actuelle: '80',
+        unite_code: 'kg',
+        date_peremption: null,
+        produit: { nom: 'Beurre' },
+      },
+      quantity: '10',
+    },
+  ],
+};
+
+describeWithSqlite('brouillon de transformation', () => {
+  beforeEach(() => {
+    engine = new DatabaseSync(':memory:');
+    engine.exec(SCHEMA);
+    mockUserId = 'operateur-A';
+  });
+
+  it('rend la cuve et les lots parents scannés à l’opérateur', async () => {
+    await saveTransformationDraft(TRANSFO_DRAFT);
+    expect(await loadTransformationDraft()).toEqual(TRANSFO_DRAFT);
+  });
+
+  it('n’ouvre jamais le brouillon d’un opérateur chez un autre', async () => {
+    await saveTransformationDraft(TRANSFO_DRAFT);
+    mockUserId = 'operateur-B';
+    expect(await loadTransformationDraft()).toBeNull();
+  });
+
+  it('est effacé après l’envoi', async () => {
+    await saveTransformationDraft(TRANSFO_DRAFT);
+    await clearTransformationDraft();
+    expect(await loadTransformationDraft()).toBeNull();
+  });
+});
+
+describeWithSqlite('brouillon d’expédition', () => {
+  beforeEach(() => {
+    engine = new DatabaseSync(':memory:');
+    engine.exec(SCHEMA);
+    mockUserId = 'operateur-A';
+  });
+
+  it('rend le client, le transport et les lots chargés', async () => {
+    await saveShipmentDraft(SHIP_DRAFT);
+    expect(await loadShipmentDraft()).toEqual(SHIP_DRAFT);
+  });
+
+  it('n’ouvre jamais le brouillon d’un opérateur chez un autre', async () => {
+    await saveShipmentDraft(SHIP_DRAFT);
+    mockUserId = 'operateur-B';
+    expect(await loadShipmentDraft()).toBeNull();
+  });
+
+  it('est effacé après l’envoi', async () => {
+    await saveShipmentDraft(SHIP_DRAFT);
+    await clearShipmentDraft();
+    expect(await loadShipmentDraft()).toBeNull();
+  });
+});
+
+// La colonne `kind` isole les trois écrans : un brouillon n'écrase pas celui d'un autre écran.
+describeWithSqlite('isolation des trois brouillons', () => {
+  beforeEach(() => {
+    engine = new DatabaseSync(':memory:');
+    engine.exec(SCHEMA);
+    mockUserId = 'operateur-A';
+  });
+
+  it('garde les trois brouillons du même opérateur, sans collision', async () => {
+    await saveReceiptDraft(DRAFT);
+    await saveTransformationDraft(TRANSFO_DRAFT);
+    await saveShipmentDraft(SHIP_DRAFT);
+
+    expect(await loadReceiptDraft()).toEqual(DRAFT);
+    expect(await loadTransformationDraft()).toEqual(TRANSFO_DRAFT);
+    expect(await loadShipmentDraft()).toEqual(SHIP_DRAFT);
+
+    // Effacer l'un ne touche pas les autres.
+    await clearTransformationDraft();
+    expect(await loadTransformationDraft()).toBeNull();
+    expect(await loadReceiptDraft()).toEqual(DRAFT);
+    expect(await loadShipmentDraft()).toEqual(SHIP_DRAFT);
   });
 });

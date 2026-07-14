@@ -26,6 +26,11 @@ import {
   type Batch,
 } from '@/lib/batches';
 import { loadProducts, type Product } from '@/lib/catalog';
+import {
+  clearTransformationDraft,
+  loadTransformationDraft,
+  saveTransformationDraft,
+} from '@/lib/draft';
 import { findEquipmentByCode, loadEquipment, type Equipment } from '@/lib/equipment';
 import { getErrorMessage, isNetworkError } from '@/lib/errors';
 import { useOnlineStatus } from '@/hooks/use-online-status';
@@ -86,6 +91,33 @@ export default function TransformationScreen() {
       })
       .finally(() => setLoading(false));
   }, []);
+
+  // (issue #73) Restauration du brouillon au montage. Un 401 en fond démonte l'écran et détruisait
+  // la cuve scannée, les lots parents et leurs quantités : l'opérateur recommençait tout, debout
+  // devant sa cuve. On les lui rend.
+  useEffect(() => {
+    let alive = true;
+    loadTransformationDraft()
+      .then((draft) => {
+        if (!alive || !draft) return;
+        setCuve(draft.cuve);
+        setParents(draft.parents);
+        setProductId(draft.productId);
+        setQuantity(draft.quantity);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Le brouillon suit la saisie — écriture SQLite locale, pas un appel réseau — mais jamais un
+  // formulaire VIDE : ça effacerait le brouillon qu'on vient de restaurer au premier rendu.
+  useEffect(() => {
+    const vide = !cuve && parents.length === 0 && !productId && !quantity;
+    if (vide) return;
+    void saveTransformationDraft({ cuve, parents, productId, quantity }).catch(() => undefined);
+  }, [cuve, parents, productId, quantity]);
 
   const units = transformationUnits([
     ...products.map((product) => product.unite_reference),
@@ -227,6 +259,9 @@ export default function TransformationScreen() {
 
     try {
       await createTransformation(payload);
+
+      // Envoyée : le brouillon a fait son office. Le garder le ferait resurgir sur la suivante.
+      await clearTransformationDraft().catch(() => undefined);
 
       Toast.show({
         type: 'success',

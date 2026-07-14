@@ -26,6 +26,7 @@ import {
   lookupBatch,
   type Batch,
 } from '@/lib/batches';
+import { clearShipmentDraft, loadShipmentDraft, saveShipmentDraft } from '@/lib/draft';
 import { getErrorMessage, isNetworkError } from '@/lib/errors';
 import {
   buildShipment,
@@ -78,6 +79,33 @@ export default function ExpeditionScreen() {
       })
       .finally(() => setLoading(false));
   }, []);
+
+  // (issue #73) Restauration du brouillon au montage. Un 401 en fond démonte l'écran et détruisait
+  // le client, le n° de transport et les lots chargés : tout était à refaire.
+  useEffect(() => {
+    let alive = true;
+    loadShipmentDraft()
+      .then((draft) => {
+        if (!alive || !draft) return;
+        setCustomerId(draft.customerId);
+        setShipmentId(draft.shipmentId);
+        setCarrier(draft.carrier);
+        setAddress(draft.address);
+        setLots(draft.lots);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Le brouillon suit la saisie — écriture SQLite locale — mais jamais un formulaire VIDE : ça
+  // effacerait le brouillon qu'on vient de restaurer au premier rendu.
+  useEffect(() => {
+    const vide = !customerId && !shipmentId && !carrier && !address && lots.length === 0;
+    if (vide) return;
+    void saveShipmentDraft({ customerId, shipmentId, carrier, address, lots }).catch(() => undefined);
+  }, [customerId, shipmentId, carrier, address, lots]);
 
   // La vérification d'un lot passe par le réseau, et l'opérateur peut annuler pendant ce temps.
   // Chaque scan a donc un numéro de session : fermer la modale l'invalide. Sans ça, une palette
@@ -156,6 +184,9 @@ export default function ExpeditionScreen() {
 
     try {
       await createShipment(payload);
+
+      // Envoyée : le brouillon a fait son office. Le garder le ferait resurgir sur la suivante.
+      await clearShipmentDraft().catch(() => undefined);
 
       Toast.show({
         type: 'success',
