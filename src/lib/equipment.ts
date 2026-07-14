@@ -41,6 +41,18 @@ export function isStorageEquipment(equipment: Equipment): boolean {
 }
 
 /**
+ * L'étiquette d'un matériel se reconnaît à l'œil : le serveur la frappe `EQP-` + 10 hexadécimaux
+ * (cf. `equipment.service.ts`). Reconnaître la FORME, sans avoir la liste des matériels en main,
+ * permet de dire « ceci est un emplacement » même hors réseau et cache vide — au lieu d'ouvrir une
+ * réception avec le code d'un frigo dans le numéro d'expédition.
+ */
+const EQUIPMENT_CODE = /^EQP-[0-9A-F]{10}$/i;
+
+export function isEquipmentCode(code: string): boolean {
+  return EQUIPMENT_CODE.test(code.trim());
+}
+
+/**
  * Résout un code scanné en équipement, localement. On accepte l'étiquette QR comme
  * l'identifiant : toutes les étiquettes ne portent pas encore de code dédié.
  *

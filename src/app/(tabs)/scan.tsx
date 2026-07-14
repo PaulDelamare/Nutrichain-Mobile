@@ -13,7 +13,12 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Toast from 'react-native-toast-message';
 
+import { resolveBatch } from '@/lib/batches';
+import { isEquipmentCode } from '@/lib/equipment';
+import { ApiError, getErrorMessage } from '@/lib/errors';
+import { parseScannedCode } from '@/lib/gs1';
 import { BRAND, BRAND_GRADIENT } from '@/lib/theme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -30,23 +35,85 @@ export default function ScanScreen() {
 
   // Le verrou vit dans une ref, pas dans l'état : la caméra rappelle depuis le processeur
   // natif de frames SANS attendre le re-rendu de React, donc deux codes lus dans la même
-  // frame liraient tous deux `false` — deux écrans de réception empilés, et l'opérateur
-  // enregistre deux fois la même palette. Il est relâché au retour sur l'onglet, ce qui
-  // évite un minuteur à nettoyer.
+  // frame liraient tous deux `false` — deux écrans empilés, et l'opérateur enregistre deux
+  // fois la même palette. Il est relâché au retour sur l'onglet, ce qui évite un minuteur.
   const scanned = useRef(false);
   useFocusEffect(useCallback(() => void (scanned.current = false), []));
 
-  const handleCode = useCallback((code: string) => {
+  const handleCode = useCallback(async (code: string) => {
     if (scanned.current) return;
     scanned.current = true;
-    router.push({ pathname: '/reception', params: { code } });
+
+    // ⚠️ Le verrou n'est relâché QUE sur les chemins qui ne naviguent pas. Le relâcher aussi
+    // après un `router.push` réussi rouvrirait le double-scan : l'onglet n'est pas démonté par
+    // un push, la caméra reste montée et retire aussitôt sur la même étiquette.
+    const stayHere = () => {
+      scanned.current = false;
+    };
+
+    const goToReception = () => router.push({ pathname: '/reception', params: { code } });
+
+    const parsed = parseScannedCode(code);
+
+    // L'étiquette d'un frigo n'est pas un lot : sans ce test, elle ouvrait un formulaire de
+    // réception avec le code du matériel dans le numéro d'expédition.
+    if (isEquipmentCode(parsed.raw)) {
+      Toast.show({
+        type: 'error',
+        text1: 'Ceci est un emplacement',
+        text2: "Scannez l'étiquette d'un lot. Un frigo se scanne depuis la réception.",
+      });
+      stayHere();
+      return;
+    }
+
+    // Aucun numéro de lot lisible (un SSCC de colis, un GTIN seul) : rien à interroger, c'est une
+    // marchandise qui arrive.
+    if (!parsed.lotNumber) {
+      goToReception();
+      return;
+    }
+
+    // Le `try` n'entoure QUE l'appel serveur : y inclure la navigation ferait ouvrir une réception
+    // (dans le `catch`) pour un lot que le serveur venait de reconnaître.
+    let batch: Awaited<ReturnType<typeof resolveBatch>>;
+    try {
+      batch = await resolveBatch(parsed.lotNumber);
+    } catch (error: unknown) {
+      // Une session expirée a déjà renvoyé l'opérateur vers l'écran de connexion : empiler une
+      // réception par-dessus le laisserait dans un formulaire qu'il ne pourra jamais envoyer.
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        Toast.show({ type: 'error', text1: 'Scan impossible', text2: getErrorMessage(error) });
+        stayHere();
+        return;
+      }
+
+      // Hors réseau, on ne SAIT PAS si ce lot existe déjà. Dire « lot inconnu » serait un mensonge,
+      // et l'opérateur réceptionnerait une palette déjà en stock. On le dit — et on ouvre quand
+      // même la réception : saisir hors ligne est la raison d'être de cette application.
+      Toast.show({
+        type: 'error',
+        text1: 'Lot non vérifié',
+        text2: `${getErrorMessage(error)} Vérifiez qu'il n'est pas déjà en stock.`,
+      });
+      goToReception();
+      return;
+    }
+
+    if (batch) {
+      router.push({ pathname: '/batch/[id]', params: { id: batch.id } });
+      return;
+    }
+
+    // 404, et 404 SEULEMENT : ce lot n'existe pas → c'est une marchandise qui arrive.
+    goToReception();
   }, []);
 
-  const handleSimulate = () => handleCode('00376112345678901234');
+  const handleSimulate = () => void handleCode('00376112345678901234');
 
   const handleManualSubmit = () => {
     if (!manualInput.trim()) return;
-    handleCode(manualInput.trim());
+    void handleCode(manualInput.trim());
     setManualInput('');
   };
 

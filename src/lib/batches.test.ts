@@ -4,6 +4,7 @@ import {
   isUsableBatch,
   loadBatch,
   loadBatches,
+  resolveBatch,
   type Batch,
 } from './batches';
 import { readCache, writeCache } from './cache';
@@ -182,5 +183,58 @@ describe('blockingReason', () => {
   it('signale une date de péremption dépassée', () => {
     const perime = batch({ statut: 'EN_STOCK', date_peremption: '2020-01-01T00:00:00.000Z' });
     expect(blockingReason(perime)).toContain('péremption');
+  });
+});
+
+describe('resolveBatch — le lot qu’on vient de scanner', () => {
+  it('interroge le serveur avec le numéro de lot', async () => {
+    apiClient.get.mockResolvedValue({
+      data: {
+        data: {
+          id: 'bat-1',
+          lot_number: 'FRN-77',
+          statut: 'EN_STOCK',
+          quantite_actuelle: '400',
+          unite_code: 'kg',
+          date_peremption: null,
+          date_creation: null,
+          produit: { nom: 'Beurre' },
+        },
+      },
+    });
+
+    const found = await resolveBatch('FRN-77');
+
+    expect(apiClient.get).toHaveBeenCalledWith('/api/logistics/batches/resolve', {
+      params: { lot_number: 'FRN-77' },
+    });
+    expect(found?.id).toBe('bat-1');
+    expect(found?.produitNom).toBe('Beurre');
+  });
+
+  it('rend null quand le lot n’existe pas (404)', async () => {
+    apiClient.get.mockRejectedValue(new ApiError('Lot introuvable', 404, 'batch'));
+
+    await expect(resolveBatch('INCONNU')).resolves.toBeNull();
+  });
+
+  // ⚠️ LE test de cette fonction. Avaler une panne réseau dans le même `null` que le 404 ferait
+  // conclure « ce lot n'existe pas » alors qu'on n'en sait RIEN — et l'opérateur réceptionnerait
+  // une seconde fois une palette déjà en stock. C'est le doublon que toute cette chaîne empêche.
+  it('RELANCE une panne réseau au lieu de la confondre avec un lot inconnu', async () => {
+    apiClient.get.mockRejectedValue(new ApiError('Erreur réseau', 0));
+
+    await expect(resolveBatch('FRN-77')).rejects.toThrow('Erreur réseau');
+  });
+
+  it.each([
+    ['une erreur serveur', new ApiError('Boom', 500)],
+    ['une session expirée', new ApiError('Non authentifié', 401, 'auth')],
+    ['un refus de droits', new ApiError('Accès refusé', 403, 'auth')],
+    ['un numéro invalide', new ApiError('Trop long', 400, 'lot_number')],
+  ])('relance %s — seul un 404 signifie « lot inconnu »', async (_cas, error) => {
+    apiClient.get.mockRejectedValue(error);
+
+    await expect(resolveBatch('FRN-77')).rejects.toThrow();
   });
 });

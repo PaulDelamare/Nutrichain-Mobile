@@ -1,5 +1,11 @@
 import { readCache, writeCache } from './cache';
-import { findEquipmentByCode, isStorageEquipment, loadEquipment, type Equipment } from './equipment';
+import {
+  findEquipmentByCode,
+  isEquipmentCode,
+  isStorageEquipment,
+  loadEquipment,
+  type Equipment,
+} from './equipment';
 import { ApiError } from './errors';
 
 jest.mock('./cache');
@@ -85,5 +91,31 @@ describe('isStorageEquipment', () => {
     // Y rattacher un lot ferait porter la quarantaine sur un matériel qui n'est pas son
     // emplacement réel — et le lot vraiment stocké ailleurs ne serait jamais bloqué.
     expect(isStorageEquipment(CUVE)).toBe(false);
+  });
+});
+
+describe('isEquipmentCode', () => {
+  // L'étiquette d'un frigo scannée depuis l'onglet Scan ouvrait un formulaire de réception, avec
+  // le code du matériel logé dans le numéro d'expédition. Reconnaître la FORME permet de le dire
+  // même hors réseau, sans avoir la liste des matériels en main.
+  it.each([
+    ['une étiquette de matériel', 'EQP-A1B2C3D4E5', true],
+    ['la même en minuscules', 'eqp-a1b2c3d4e5', true],
+    ['avec des espaces autour', '  EQP-A1B2C3D4E5  ', true],
+  ])('reconnaît %s', (_cas, code, attendu) => {
+    expect(isEquipmentCode(code)).toBe(attendu);
+  });
+
+  // Un numéro de lot qui commence par « EQP » ne doit surtout pas être pris pour un frigo :
+  // l'opérateur ne pourrait plus jamais ouvrir sa fiche.
+  it.each([
+    ['un numéro de lot qui y ressemble', 'EQP-2026-001'],
+    ['un préfixe seul', 'EQP-'],
+    ['une longueur non conforme', 'EQP-A1B2C3'],
+    ['des caractères non hexadécimaux', 'EQP-ZZZZZZZZZZ'],
+    ['un vrai numéro de lot', '260714-WRFG37'],
+    ['une chaîne vide', ''],
+  ])('ne prend pas %s pour un matériel', (_cas, code) => {
+    expect(isEquipmentCode(code)).toBe(false);
   });
 });
