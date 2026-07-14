@@ -209,7 +209,7 @@ describe('isUsableBatch', () => {
 });
 
 describe('loadBatch', () => {
-  it('mappe la fiche lot (produit inclus, Decimal → number)', async () => {
+  it('renvoie « ok » et mappe la fiche lot (produit inclus, Decimal → number)', async () => {
     apiClient.get.mockResolvedValue({
       data: {
         data: {
@@ -225,9 +225,10 @@ describe('loadBatch', () => {
       },
     });
 
-    const batch = await loadBatch('b1');
+    const result = await loadBatch('b1');
 
-    expect(batch).toMatchObject({
+    expect(result.kind).toBe('ok');
+    expect(result.kind === 'ok' && result.batch).toMatchObject({
       id: 'b1',
       lotNumber: '260709-000099',
       statut: 'BLOQUE',
@@ -238,10 +239,28 @@ describe('loadBatch', () => {
     });
   });
 
-  it('renvoie null hors réseau plutôt que de faire tomber l’écran', async () => {
-    apiClient.get.mockRejectedValue(new Error('offline'));
+  // ⚠️ LE cœur de l'issue : 404, 403 et panne réseau ne doivent PAS donner le même écran vide.
+  // `lookupBatch` distinguait déjà ; `loadBatch` avalait tout dans un `null`.
+  it('distingue un lot introuvable (404) d’une incertitude', async () => {
+    apiClient.get.mockRejectedValue(new ApiError('Introuvable', 404));
+    expect((await loadBatch('b1')).kind).toBe('unknown');
+  });
 
-    expect(await loadBatch('b1')).toBeNull();
+  it('distingue un refus de droits (403) — permanent, pas une panne à réessayer', async () => {
+    apiClient.get.mockRejectedValue(new ApiError('Interdit', 403));
+    expect((await loadBatch('b1')).kind).toBe('forbidden');
+  });
+
+  it('AVOUE l’incertitude hors réseau (unverifiable), au lieu d’un « introuvable » mensonger', async () => {
+    apiClient.get.mockRejectedValue(new ApiError('Erreur réseau', 0));
+    expect((await loadBatch('b1')).kind).toBe('unverifiable');
+  });
+
+  it('ne rejette JAMAIS, même sur une erreur inattendue', async () => {
+    apiClient.get.mockImplementation(() => {
+      throw new Error('boom');
+    });
+    await expect(loadBatch('b1')).resolves.toMatchObject({ kind: 'unverifiable' });
   });
 });
 
