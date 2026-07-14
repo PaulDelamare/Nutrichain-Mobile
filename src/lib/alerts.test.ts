@@ -194,14 +194,113 @@ describe('resolveAlert', () => {
 });
 
 describe('releaseAndResolve', () => {
+  const lot = (id: string, lotNumber: string) => ({
+    id,
+    lotNumber,
+    produitNom: 'Beurre',
+    quantite: 100,
+    uniteCode: 'kg',
+  });
+  const B1 = lot('b1', 'LOT-1');
+  const B2 = lot('b2', 'LOT-2');
+  const B3 = lot('b3', 'LOT-3');
+
+  /** Ce que le SERVEUR dit encore bloqué, après coup. */
+  const stillBlocked = (...ids: string[]) =>
+    apiClient.get.mockResolvedValue({
+      data: { data: ids.map((id) => ({ id, lot_number: id, quantite_actuelle: '1', unite_code: 'kg', id_materiel_actuel: 'eq1' })) },
+    });
+
   it('lève chaque lot (motif obligatoire) puis clôture l’alerte', async () => {
     apiClient.post.mockResolvedValue({ data: {} });
     apiClient.patch.mockResolvedValue({ data: {} });
+    stillBlocked();
 
-    await releaseAndResolve('a1', ['b1', 'b2'], 'faux positif capteur');
+    const outcome = await releaseAndResolve('a1', [B1, B2], 'faux positif capteur');
 
     expect(apiClient.post).toHaveBeenCalledWith('/api/logistics/batches/b1/release', { motif: 'faux positif capteur' });
     expect(apiClient.post).toHaveBeenCalledWith('/api/logistics/batches/b2/release', { motif: 'faux positif capteur' });
     expect(apiClient.patch).toHaveBeenCalledWith('/api/alerts/a1/resolve', { note: 'faux positif capteur' });
+    expect(outcome).toMatchObject({ alertResolved: true, stillBlocked: [] });
+    expect(outcome.released).toHaveLength(2);
+  });
+
+  // ⚠️ LE test. La boucle n'est pas atomique : elle abandonnait au premier échec, et l'écran
+  // affichait « Levée impossible ». Or les lots précédents étaient DÉJÀ remis en stock —
+  // l'opérateur repartait convaincu que sa marchandise suspecte était toujours isolée.
+  it('DIT ce qui est parti quand la levée est partielle', async () => {
+    apiClient.post
+      .mockResolvedValueOnce({ data: {} })   // b1 : relâché
+      .mockResolvedValueOnce({ data: {} })   // b2 : relâché
+      .mockRejectedValueOnce(new ApiError('Boom', 500)); // b3 : échec applicatif
+    stillBlocked('b3');
+
+    const outcome = await releaseAndResolve('a1', [B1, B2, B3], 'motif');
+
+    expect(outcome.released.map((b) => b.id)).toEqual(['b1', 'b2']);
+    expect(outcome.stillBlocked.map((b) => b.id)).toEqual(['b3']);
+    // L'alerte reste OUVERTE : de la marchandise suspecte est encore isolée.
+    expect(outcome.alertResolved).toBe(false);
+    expect(apiClient.patch).not.toHaveBeenCalled();
+  });
+
+  // ⚠️ Une erreur APPLICATIVE (le serveur a répondu) ne concerne qu'UN lot : les suivants doivent
+  // quand même être tentés. Sans ce test, « abandonner au premier échec » — le bug d'origine —
+  // passe inaperçu : mon premier test plaçait l'échec sur le DERNIER lot, où les deux
+  // comportements donnent le même résultat. Il ne prouvait rien.
+  it('continue les lots suivants quand UN lot est refusé par le serveur', async () => {
+    apiClient.post
+      .mockRejectedValueOnce(new ApiError('Boom', 500)) // b1 : refusé
+      .mockResolvedValueOnce({ data: {} })              // b2 : doit être tenté QUAND MÊME
+      .mockResolvedValueOnce({ data: {} });             // b3 : idem
+    stillBlocked('b1');
+
+    const outcome = await releaseAndResolve('a1', [B1, B2, B3], 'motif');
+
+    expect(apiClient.post).toHaveBeenCalledTimes(3);
+    expect(outcome.released.map((b) => b.id)).toEqual(['b2', 'b3']);
+    expect(outcome.stillBlocked.map((b) => b.id)).toEqual(['b1']);
+    expect(outcome.alertResolved).toBe(false);
+  });
+
+  // ⚠️ Le `release` n'est PAS idempotent : un lot déjà relâché répond 409 POUR TOUJOURS. Compter
+  // ce 409 comme un échec rendrait l'alerte DÉFINITIVEMENT inclôturable. On observe l'état réel.
+  it('n’enferme pas l’alerte quand un lot est déjà relâché (409)', async () => {
+    apiClient.post
+      .mockResolvedValueOnce({ data: {} })
+      .mockRejectedValueOnce(new ApiError('Seul un lot en quarantaine peut être levé', 409));
+    stillBlocked(); // le serveur : plus AUCUN lot bloqué
+    apiClient.patch.mockResolvedValue({ data: {} });
+
+    const outcome = await releaseAndResolve('a1', [B1, B2], 'motif');
+
+    expect(outcome.stillBlocked).toEqual([]);
+    expect(outcome.alertResolved).toBe(true);
+    expect(apiClient.patch).toHaveBeenCalled();
+  });
+
+  // Une panne réseau ARRÊTE la boucle : insister, c'est 30 s de délai d'attente PAR LOT — deux
+  // minutes trente de spinner bloquant, dans une chambre froide.
+  it('n’insiste pas lot après lot quand le réseau est coupé', async () => {
+    apiClient.post.mockRejectedValue(new ApiError('Erreur réseau', 0));
+    apiClient.get.mockRejectedValue(new ApiError('Erreur réseau', 0));
+
+    const outcome = await releaseAndResolve('a1', [B1, B2, B3], 'motif');
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    expect(outcome.released).toEqual([]);
+    expect(outcome.alertResolved).toBe(false);
+  });
+
+  // On ne peut même plus OBSERVER l'état : on ne prétend rien. Surtout pas qu'un lot est relâché.
+  it('ne déclare RIEN relâché quand il ne peut pas vérifier l’état', async () => {
+    apiClient.post.mockResolvedValue({ data: {} });
+    apiClient.get.mockRejectedValue(new ApiError('Erreur réseau', 0));
+
+    const outcome = await releaseAndResolve('a1', [B1, B2], 'motif');
+
+    expect(outcome.released).toEqual([]);
+    expect(outcome.stillBlocked).toHaveLength(2);
+    expect(outcome.alertResolved).toBe(false);
   });
 });

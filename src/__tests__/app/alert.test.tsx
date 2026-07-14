@@ -23,6 +23,8 @@ const mockedLoad = jest.mocked(loadAlertDecision);
 const mockedRelease = jest.mocked(releaseAndResolve);
 const mockedResolve = jest.mocked(resolveAlert);
 const mockedToast = jest.mocked(Toast);
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const mockedRouter = jest.mocked((require('expo-router') as { router: { back: jest.Mock } }).router);
 
 const decision: AlertDecision = {
   alert: {
@@ -57,7 +59,11 @@ describe('écran de décision sur une alerte froid', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedLoad.mockResolvedValue({ kind: 'active', decision });
-    mockedRelease.mockResolvedValue(undefined);
+    mockedRelease.mockResolvedValue({
+      released: decision.batches,
+      stillBlocked: [],
+      alertResolved: true,
+    });
     mockedResolve.mockResolvedValue(undefined);
   });
 
@@ -81,7 +87,9 @@ describe('écran de décision sur une alerte froid', () => {
     await waitFor(() =>
       expect(mockedRelease).toHaveBeenCalledWith(
         'alert-1',
-        ['b-1'],
+        // On passe les LOTS, pas seulement leurs identifiants : le compte-rendu d'une levée
+        // partielle doit pouvoir nommer ceux qui sont partis et ceux qui restent.
+        [expect.objectContaining({ id: 'b-1' })],
         'Mesure thermique répétée, produit conforme'
       )
     );
@@ -186,5 +194,57 @@ describe('écran de décision sur une alerte froid', () => {
 
     await waitFor(() => expect(screen.getByText(/Aucun lot isolé/)).toBeTruthy());
     expect(screen.queryByText('Enregistrer sans isolation')).toBeNull();
+  });
+
+  // ⚠️ LE test. La boucle n'est pas atomique. Si le 3e lot échoue, les deux premiers sont DÉJÀ
+  // remis en stock — et l'écran affichait « Levée impossible ». L'opérateur repartait convaincu
+  // que sa marchandise suspectée d'excursion thermique était toujours isolée.
+  it('DIT qu’une levée est partielle au lieu d’annoncer un échec total', async () => {
+    const autre = { ...decision.batches[0], id: 'b-2', lotNumber: 'LOT-002' };
+    mockedLoad.mockResolvedValue({
+      kind: 'active',
+      decision: { ...decision, batches: [decision.batches[0], autre] },
+    });
+    mockedRelease.mockResolvedValue({
+      released: [decision.batches[0]],
+      stillBlocked: [autre],
+      alertResolved: false,
+      error: new ApiError('Boom', 500),
+    });
+
+    render(<AlertDecisionScreen />);
+    await waitFor(() => expect(screen.getByText('Enregistrer sans isolation')).toBeTruthy());
+
+    fireEvent.changeText(screen.getByPlaceholderText(/isolation immédiate/i), 'Motif valable');
+    fireEvent.press(screen.getByText('Enregistrer sans isolation'));
+    confirmDialog('Lever');
+
+    // Un bandeau PERSISTANT : un toast disparaît, et l'opérateur reviendrait sur un écran
+    // identique sans savoir que de la marchandise est déjà repartie en stock.
+    await waitFor(() => expect(screen.getByText(/Levée incomplète/)).toBeTruthy());
+    expect(screen.getByText(/1 lot\(s\) déjà remis en stock/)).toBeTruthy();
+    expect(screen.getByText(/1 encore isolé/)).toBeTruthy();
+    // On ne revient PAS en arrière : l'opérateur doit voir les lots restants.
+    expect(mockedRouter.back).not.toHaveBeenCalled();
+  });
+
+  // Sans lot isolé, dire « lot(s) laissé(s) en quarantaine » est un FAUX TÉMOIGNAGE : ils sont
+  // tous en stock. C'est le mensonge que le correctif aurait simplement DÉPLACÉ.
+  it('ne prétend pas « laisser des lots en quarantaine » quand il n’y en a plus', async () => {
+    mockedLoad.mockResolvedValue({ kind: 'active', decision: { ...decision, batches: [] } });
+
+    render(<AlertDecisionScreen />);
+    await waitFor(() => expect(screen.getByText('Maintenir la quarantaine')).toBeTruthy());
+
+    fireEvent.press(screen.getByText('Maintenir la quarantaine'));
+
+    await waitFor(() =>
+      expect(mockedToast.show).toHaveBeenCalledWith(
+        expect.objectContaining({ text1: 'Alerte clôturée' })
+      )
+    );
+    expect(mockedToast.show).not.toHaveBeenCalledWith(
+      expect.objectContaining({ text1: 'Quarantaine maintenue' })
+    );
   });
 });
