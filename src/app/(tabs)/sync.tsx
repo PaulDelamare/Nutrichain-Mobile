@@ -164,17 +164,29 @@ export default function SyncScreen() {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      const summary = await syncPendingOperations();
+      // `manual` efface le délai du backoff : un appui humain ne doit pas être ignoré.
+      const summary = await syncPendingOperations({ manual: true });
       const blocked = summary.rejected + summary.conflicts;
+      // ⚠️ Rien n'est parti. Le toast était VERT dès que `blocked === 0`, indépendamment de
+      // `synced` : hors réseau, l'opérateur appuyait, tout repartait en attente, et il lisait
+      // « 0 opération(s) synchronisée(s) » sur fond vert. Vert = c'est passé, pour tout le monde.
+      const rienNEstParti = summary.sent > 0 && summary.synced === 0;
 
       Toast.show({
-        type: blocked > 0 ? 'error' : 'success',
+        type: blocked > 0 || rienNEstParti ? 'error' : 'success',
         text1:
           blocked > 0
             ? `${blocked} opération(s) bloquée(s)`
-            : `${summary.synced} opération(s) synchronisée(s)`,
-        text2:
-          summary.retried > 0 ? `${summary.retried} en attente de nouvelle tentative.` : undefined,
+            : rienNEstParti
+              ? 'Aucune opération n’a pu partir'
+              : summary.sent === 0
+                ? 'Rien à synchroniser'
+                : `${summary.synced} opération(s) synchronisée(s)`,
+        text2: rienNEstParti
+          ? 'Vérifiez le réseau : elles restent en attente.'
+          : summary.retried > 0
+            ? `${summary.retried} en attente de nouvelle tentative.`
+            : undefined,
       });
     } catch (error: unknown) {
       // ⚠️ Il n'y avait AUCUN `catch` ici. Tout ce que la synchro peut jeter — base illisible,
