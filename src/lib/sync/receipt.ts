@@ -27,26 +27,62 @@ export interface ReceiptInput {
 }
 
 /**
+ * Le message exact, sous le champ fautif — comme la transformation (`quantityError`) et l'expédition
+ * (`shipmentQuantityError`). Un bouton grisé qui n'explique rien laissait l'opérateur du quai devant
+ * le formulaire le plus utilisé de l'app sans savoir quoi corriger. `null` = champ valide.
+ *
+ * ⚠️ Reception n'impose PAS la limite de 2 décimales de la transformation : ne pas inventer de
+ * contrainte que le serveur ne pose pas.
+ */
+export function receiptQuantityError(value: string): string | null {
+  const quantity = Number(value.trim().replace(',', '.'));
+
+  if (!Number.isFinite(quantity)) {
+    return 'Quantité invalide : un nombre est attendu.';
+  }
+  if (quantity <= 0) {
+    return 'La quantité doit être supérieure à 0.';
+  }
+
+  return null;
+}
+
+/** Le message exact sous le n° d'expédition. Bornes du schéma serveur (VineJS, 3..100). */
+export function receiptShipmentError(value: string): string | null {
+  const length = value.trim().length;
+
+  if (length < SHIPMENT_ID_MIN_LENGTH) {
+    return `Le n° d'expédition doit faire au moins ${SHIPMENT_ID_MIN_LENGTH} caractères.`;
+  }
+  if (length > SHIPMENT_ID_MAX_LENGTH) {
+    return `Le n° d'expédition ne doit pas dépasser ${SHIPMENT_ID_MAX_LENGTH} caractères.`;
+  }
+
+  return null;
+}
+
+/**
  * Seul garde-fou avant la file : une saisie invalide y entre, fait refuser le lot entier
  * (validation fail-fast du serveur), et l'opérateur se retrouve avec un scan bloqué qu'il
  * ne peut plus corriger. Retourne `null` si la saisie ne peut pas devenir une réception.
+ *
+ * Partage ses règles quantité/n° d'expédition avec les messages ci-dessus : une SEULE source, pour
+ * qu'un message affiché et un bouton grisé ne se contredisent jamais.
  */
 export function buildReceipt(input: ReceiptInput): ReceiptPayload | null {
-  const shipmentId = input.shipmentId.trim();
-  const quantity = Number(input.quantity.replace(',', '.'));
-
   const isValid =
     input.supplierId !== '' &&
     input.productId !== '' &&
     input.unit !== '' &&
-    shipmentId.length >= SHIPMENT_ID_MIN_LENGTH &&
-    shipmentId.length <= SHIPMENT_ID_MAX_LENGTH &&
-    Number.isFinite(quantity) &&
-    quantity > 0;
+    receiptShipmentError(input.shipmentId) === null &&
+    receiptQuantityError(input.quantity) === null;
 
   if (!isValid) {
     return null;
   }
+
+  const shipmentId = input.shipmentId.trim();
+  const quantity = Number(input.quantity.replace(',', '.'));
 
   // Optionnels côté serveur : on ne les envoie que VALIDES. Invalides, on les omet (sans invalider
   // la réception), car un champ malformé ferait rejeter le lot de sync entier.
