@@ -1,5 +1,6 @@
 import * as Network from 'expo-network';
 
+import { toastError } from '../toast';
 import { flagStalePending, purgeSyncedBefore } from './queue';
 import { syncPendingOperations } from './sync';
 
@@ -12,9 +13,17 @@ const STALE_MESSAGE =
 let online = false;
 
 function trigger(): void {
-  // Fire-and-forget : l'écran appelant n'attend pas, et une sync ratée sera
-  // relancée au prochain retour du réseau ou à l'ouverture de l'onglet Sync.
-  syncPendingOperations().catch(() => undefined);
+  // Fire-and-forget : l'écran appelant n'attend pas, et une sync ratée sera relancée au prochain
+  // retour du réseau ou à l'ouverture de l'onglet Sync.
+  //
+  // ⚠️ Mais une PANNE n'est pas un échec ordinaire. `.catch(() => undefined)` avalait aussi bien la
+  // base illisible que le verdict serveur inconnu (`outcome.ts` jette volontairement) : le jour où
+  // l'API ajoute un verdict, le mobile cesserait de synchroniser POUR TOUJOURS, sans un mot. Une
+  // erreur réseau, elle, est normale hors ligne : elle est déjà traitée dans `syncPendingOperations`
+  // (mise en attente de nouvelle tentative) et ne remonte pas jusqu'ici.
+  syncPendingOperations().catch((error: unknown) => {
+    toastError('Synchronisation automatique interrompue', error);
+  });
 }
 
 /**

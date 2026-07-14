@@ -7,6 +7,7 @@ import {
   type OperationStatus,
   type OperationUpdate,
   type QueuedOperation,
+  type SendableOperation,
   type ReceiptPayload,
 } from './types';
 
@@ -21,17 +22,62 @@ interface OperationRow {
   created_at: number;
 }
 
+export const CORRUPTED_PAYLOAD_MESSAGE =
+  'Scan illisible en base : il ne peut pas être renvoyé. Supprimez-le et refaites-le.';
+
+/**
+ * ⚠️ Un payload illisible ne doit JAMAIS jeter.
+ *
+ * `JSON.parse` était appelé à nu ici, au cœur de `listOperations` ET de `getPendingOperations`. Une
+ * seule ligne corrompue (écriture partielle, disque plein) et la lecture de la file entière jetait :
+ * l'écran de synchro affichait « Aucune opération en file. Tout est synchronisé. » pendant que
+ * l'accueil, qui ne parse rien, annonçait « 5 en attente ». Deux écrans qui se contredisent, et une
+ * synchro qui ne repart plus jamais.
+ *
+ * Une ligne illisible devient donc une opération VISIBLE et supprimable, jamais une exception.
+ */
+function parsePayload(raw: string): ReceiptPayload | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === 'object' ? (parsed as ReceiptPayload) : null;
+  } catch {
+    return null;
+  }
+}
+
 function toOperation(row: OperationRow): QueuedOperation {
+  const payload = parsePayload(row.payload);
+
   return {
     clientOpId: row.client_op_id,
     type: row.type,
-    payload: JSON.parse(row.payload) as ReceiptPayload,
-    status: row.status,
+    payload,
+    // Corrompue = bloquée, pas « en attente » : elle ne partira jamais, il faut la voir et l'effacer.
+    status: payload === null ? 'CONFLICT' : row.status,
     attempts: row.attempts,
-    error: row.error,
+    error: payload === null ? CORRUPTED_PAYLOAD_MESSAGE : row.error,
     createdAt: row.created_at,
     orphan: row.user_id === '',
+    corrupted: payload === null,
   };
+}
+
+/**
+ * Grave le blocage en base. Sans ça, `countByStatus` (qui ne parse rien) continuerait de compter la
+ * ligne comme `PENDING` : l'accueil dirait « 1 en attente » quand l'écran de synchro la montre
+ * bloquée. Le mensonge changerait juste d'écran.
+ */
+async function quarantineCorrupted(operations: QueuedOperation[]): Promise<void> {
+  const ids = operations.filter((op) => op.corrupted).map((op) => op.clientOpId);
+  if (ids.length === 0) return;
+
+  const db = await getDatabase();
+  await db.runAsync(
+    `UPDATE operations SET status = 'CONFLICT', error = ?
+      WHERE client_op_id IN (${ids.map(() => '?').join(', ')})`,
+    CORRUPTED_PAYLOAD_MESSAGE,
+    ...ids
+  );
 }
 
 const INSERT_OPERATION = `INSERT INTO operations (client_op_id, user_id, type, payload, status, created_at)
@@ -183,7 +229,10 @@ export async function flagStalePending(timestamp: number, message: string): Prom
 }
 
 /** N'envoie QUE les scans de l'opérateur connecté : ceux d'un autre partiraient sous son identité. */
-export async function getPendingOperations(now: number, limit: number): Promise<QueuedOperation[]> {
+export async function getPendingOperations(
+  now: number,
+  limit: number
+): Promise<SendableOperation[]> {
   const db = await getDatabase();
   const userId = await getUserId();
 
@@ -202,7 +251,12 @@ export async function getPendingOperations(now: number, limit: number): Promise<
     limit
   );
 
-  return rows.map(toOperation);
+  const operations = rows.map(toOperation);
+  await quarantineCorrupted(operations);
+
+  // Une opération illisible ne peut pas être envoyée : la garder ici la ferait échouer à chaque
+  // tentative, indéfiniment. Elle est désormais bloquée, donc visible et supprimable.
+  return operations.filter((op): op is SendableOperation => op.payload !== null);
 }
 
 export async function saveOperationUpdates(updates: OperationUpdate[]): Promise<void> {
@@ -322,5 +376,8 @@ export async function listOperations(): Promise<QueuedOperation[]> {
     HISTORY_LIMIT
   );
 
-  return [...blocked, ...history].map(toOperation);
+  const operations = [...blocked, ...history].map(toOperation);
+  await quarantineCorrupted(operations);
+
+  return operations;
 }

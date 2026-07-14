@@ -1,4 +1,5 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react-native';
+import Toast from 'react-native-toast-message';
 
 import { countByStatus, deleteOperation, listOperations, requeueOperation } from '@/lib/sync/queue';
 import { syncPendingOperations } from '@/lib/sync/sync';
@@ -11,6 +12,9 @@ jest.mock('@/lib/sync/sync');
 jest.mock('@/hooks/use-online-status', () => ({ useOnlineStatus: () => true }));
 jest.mock('expo-router', () => ({ useFocusEffect: (effect: () => void) => effect() }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
+jest.mock('react-native-toast-message', () => ({ show: jest.fn() }));
+
+const mockedToast = jest.mocked(Toast);
 
 const queue = jest.mocked({ countByStatus, deleteOperation, listOperations, requeueOperation });
 const mockedSync = jest.mocked(syncPendingOperations);
@@ -141,5 +145,41 @@ describe('écran de synchronisation', () => {
     await waitFor(() => expect(screen.getByText('Réception · SHIP-PENDING')).toBeTruthy());
     expect(screen.queryByText('Renvoyer')).toBeNull();
     expect(screen.queryByText('Supprimer')).toBeNull();
+  });
+});
+
+describe('la synchronisation ne peut plus échouer en silence', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    queue.countByStatus.mockResolvedValue({ PENDING: 1, SYNCED: 0, CONFLICT: 0, REJECTED: 0 });
+    queue.listOperations.mockResolvedValue([]);
+  });
+
+  it('DIT que la synchronisation a échoué, au lieu d’arrêter le spinner sans un mot', async () => {
+    // `handleSync` n'avait AUCUN `catch`. Base illisible, verdict serveur inconnu (`outcome.ts` jette
+    // volontairement) : le spinner tournait, s'arrêtait, et rien. La file restait « en attente », et
+    // l'opérateur repartait en croyant que ça finirait par passer.
+    mockedSync.mockRejectedValue(new Error('verdict serveur inconnu'));
+
+    render(<SyncScreen />);
+    await waitFor(() => expect(screen.getByText('Synchroniser maintenant')).toBeTruthy());
+    fireEvent.press(screen.getByText('Synchroniser maintenant'));
+
+    await waitFor(() =>
+      expect(mockedToast.show).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', text1: 'Synchronisation impossible' })
+      )
+    );
+  });
+
+  it('AVOUE ne pas avoir pu lire la file, au lieu d’annoncer « tout est synchronisé »', async () => {
+    // Une liste vide ne veut pas dire « tout va bien » : elle peut aussi vouloir dire « je n'ai pas
+    // pu lire la base ». C'est le pire message possible à afficher dans ce cas.
+    queue.listOperations.mockRejectedValue(new Error('base illisible'));
+
+    render(<SyncScreen />);
+
+    await waitFor(() => expect(screen.getByText(/Impossible de lire la file/i)).toBeTruthy());
+    expect(screen.queryByText(/Tout est synchronisé/i)).toBeNull();
   });
 });

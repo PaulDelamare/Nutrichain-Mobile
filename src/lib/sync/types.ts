@@ -38,7 +38,8 @@ export interface QueuedOperation {
    */
   clientOpId: string;
   type: 'receipt';
-  payload: ReceiptPayload;
+  /** `null` quand la ligne est illisible en base (cf. `corrupted`) : on n'en sait plus rien. */
+  payload: ReceiptPayload | null;
   status: OperationStatus;
   attempts: number;
   /** Motif du blocage, tel que renvoyé par le serveur : sans lui, l'opérateur doit deviner. */
@@ -56,6 +57,19 @@ export interface QueuedOperation {
    * de celui qui appuie — lui faire signer une réception qu'il n'a pas faite.
    */
   orphan?: boolean;
+  /**
+   * Payload illisible en base. L'opération est bloquée : elle ne peut être ni envoyée ni renvoyée
+   * (on ne sait plus ce qu'elle contenait), seulement vue et supprimée.
+   */
+  corrupted?: boolean;
+}
+
+/**
+ * Une opération ENVOYABLE : son payload est lisible. C'est le compilateur, et non la discipline du
+ * prochain appelant, qui garantit qu'une ligne corrompue ne part jamais sur le réseau.
+ */
+export interface SendableOperation extends QueuedOperation {
+  payload: ReceiptPayload;
 }
 
 /** Un item de la réponse 207 de POST /api/sync/scans. */
