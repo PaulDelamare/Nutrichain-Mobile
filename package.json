@@ -50,6 +50,7 @@
     "web": "expo start --web",
     "android:native": "expo run:android",
     "ios:native": "expo run:ios",
+    "apk:local": "expo prebuild --platform android --clean && cd android && ./gradlew assembleRelease",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "typecheck": "tsc --noEmit",

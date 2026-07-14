@@ -21,6 +21,10 @@ expo-env.d.ts
 # Metro
 .metro-health-check*
 
+# EAS build artifacts (l'APK/AAB est produit dans le cloud puis téléchargé, jamais versionné)
+*.apk
+*.aab
+
 # debug
 npm-debug.*
 yarn-debug.*
