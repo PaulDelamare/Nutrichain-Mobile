@@ -4,7 +4,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -21,6 +20,7 @@ import {
   resolveAlert,
   type AlertDecision,
 } from '@/lib/alerts';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { toastError } from '@/lib/toast';
 
 // Contexte critique (danger) — couleurs locales à l'écran, distinctes de la marque teal.
@@ -66,6 +66,7 @@ export default function AlertDecisionScreen() {
   const [loading, setLoading] = useState(true);
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -126,14 +127,10 @@ export default function AlertDecisionScreen() {
       });
       return;
     }
-    Alert.alert(
-      'Lever la quarantaine ?',
-      `${decision.batches.length} lot(s) seront remis en stock. Décision tracée dans l’audit.`,
-      [
-        { text: 'Annuler', style: 'cancel' },
-        { text: 'Lever', style: 'destructive', onPress: releaseConfirmed },
-      ]
-    );
+    // ⚠️ PAS `Alert.alert` : no-op littéral sur le web (corps de méthode vide). La décision la plus
+    // lourde de l'application — remettre en stock des lots mis en quarantaine par la chaîne du
+    // froid — était un BOUTON MORT dans un navigateur. Et la démo se fait dans un navigateur.
+    setConfirming(true);
   };
 
   if (loading) {
@@ -259,6 +256,19 @@ export default function AlertDecisionScreen() {
           ) : null}
         </View>
       </ScrollView>
+
+      <ConfirmDialog
+        visible={confirming}
+        title="Lever la quarantaine ?"
+        message={`${decision.batches.length} lot(s) seront remis en stock. Décision tracée dans l’audit.`}
+        confirmLabel="Lever"
+        destructive
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => {
+          setConfirming(false);
+          releaseConfirmed();
+        }}
+      />
     </View>
   );
 }

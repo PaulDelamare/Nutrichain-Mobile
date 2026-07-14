@@ -3,6 +3,8 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useEffect, useRef } from 'react';
 import { ActivityIndicator, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import { SCANNED_BARCODE_TYPES } from '@/lib/barcodes';
+
 interface CodeScannerProps {
   visible: boolean;
   title: string;
@@ -61,6 +63,7 @@ export function CodeScanner({ visible, title, hint, busy, onClose, onScan }: Cod
               style={styles.camera}
               facing="back"
               onBarcodeScanned={({ data }) => handleBarcode(data)}
+              barcodeScannerSettings={{ barcodeTypes: SCANNED_BARCODE_TYPES }}
             />
             {busy ? (
               <View style={styles.busy}>
