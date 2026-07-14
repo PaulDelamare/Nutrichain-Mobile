@@ -3,6 +3,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react-nativ
 import TransformationScreen from '@/app/transformation';
 import { loadBatches, lookupBatch, type Batch, type BatchLookup } from '@/lib/batches';
 import { loadProducts } from '@/lib/catalog';
+import {
+  clearTransformationDraft,
+  loadTransformationDraft,
+  saveTransformationDraft,
+} from '@/lib/draft';
 import { loadEquipment } from '@/lib/equipment';
 import { ApiError } from '@/lib/errors';
 import { toastMessage } from '@/lib/toast';
@@ -15,6 +20,7 @@ jest.mock('@/lib/batches', () => ({
   lookupBatch: jest.fn(),
 }));
 jest.mock('@/lib/catalog');
+jest.mock('@/lib/draft');
 jest.mock('@/lib/equipment', () => ({
   ...jest.requireActual('@/lib/equipment'),
   loadEquipment: jest.fn(),
@@ -68,6 +74,9 @@ const mockedLoadProducts = jest.mocked(loadProducts);
 const mockedLoadEquipment = jest.mocked(loadEquipment);
 const mockedLookup = jest.mocked(lookupBatch);
 const mockedToastMessage = jest.mocked(toastMessage);
+const mockedLoadTransformationDraft = jest.mocked(loadTransformationDraft);
+const mockedSaveTransformationDraft = jest.mocked(saveTransformationDraft);
+const mockedClearTransformationDraft = jest.mocked(clearTransformationDraft);
 
  
 const { findBatchByCode } = jest.requireActual('@/lib/batches') as typeof import('@/lib/batches');
@@ -106,6 +115,28 @@ describe('écran de transformation', () => {
     ]);
     mockedLoadEquipment.mockResolvedValue([]);
     mockedLoadBatches.mockResolvedValue([batch()]);
+    mockedLoadTransformationDraft.mockResolvedValue(null);
+    mockedSaveTransformationDraft.mockResolvedValue(undefined);
+    mockedClearTransformationDraft.mockResolvedValue(undefined);
+  });
+
+  // (issue #73) Une session qui expire (401, même en fond) démonte l'écran et détruisait la cuve
+  // scannée, les lots parents, les quantités. On restaure le brouillon au montage.
+  it('restaure la cuve et les lots parents après une session expirée', async () => {
+    mockedLoadTransformationDraft.mockResolvedValue({
+      cuve: { id: 'cuve-1', nom: 'Cuve Inox A', type: 'CUVE', qr_code_id: null, lieu: { nom: 'Atelier' } },
+      parents: [
+        { batch: batch({ id: 'b-parent', lot_number: 'LOT-PARENT-9' }), quantity: '30', exhausted: false },
+      ],
+      productId: 'p-1',
+      quantity: '25',
+    });
+
+    render(<TransformationScreen />);
+
+    // La cuve et le lot parent reviennent, sans re-scan.
+    await waitFor(() => expect(screen.getByText(/LOT-PARENT-9/)).toBeTruthy());
+    expect(screen.getByText(/Cuve Inox A/)).toBeTruthy();
   });
 
   // ⚠️ (issue #72) L'unité du produit fini n'était liée à RIEN : un opérateur produisant un produit

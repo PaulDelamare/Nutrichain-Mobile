@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react-nativ
 
 import ExpeditionScreen from '@/app/expedition';
 import { loadBatches, lookupBatch, type BatchLookup, type Batch } from '@/lib/batches';
+import { clearShipmentDraft, loadShipmentDraft, saveShipmentDraft } from '@/lib/draft';
 import { ApiError } from '@/lib/errors';
 import { createShipment, loadCustomers } from '@/lib/shipment';
 import { toastMessage } from '@/lib/toast';
@@ -18,6 +19,7 @@ jest.mock('@/lib/shipment', () => ({
   loadCustomers: jest.fn(),
   createShipment: jest.fn(),
 }));
+jest.mock('@/lib/draft');
 jest.mock('@/lib/toast');
 jest.mock('@/hooks/use-online-status', () => ({ useOnlineStatus: () => true }));
 jest.mock('expo-router', () => ({ router: { back: jest.fn() } }));
@@ -75,6 +77,9 @@ const resolveLocally = async (code: string, batches: Batch[] = []): Promise<Batc
 const mockedLoadCustomers = jest.mocked(loadCustomers);
 const mockedCreateShipment = jest.mocked(createShipment);
 const mockedToastMessage = jest.mocked(toastMessage);
+const mockedLoadShipmentDraft = jest.mocked(loadShipmentDraft);
+const mockedSaveShipmentDraft = jest.mocked(saveShipmentDraft);
+const mockedClearShipmentDraft = jest.mocked(clearShipmentDraft);
 
 function batch(overrides: Partial<Batch> = {}): Batch {
   return {
@@ -103,6 +108,27 @@ describe('écran d’expédition', () => {
       { id: 'c-1', nom_enseigne: 'Épicerie du Coin', adresse_livraison: '12 rue des Halles, Paris' },
     ]);
     mockedLoadBatches.mockResolvedValue([batch()]);
+    mockedLoadShipmentDraft.mockResolvedValue(null);
+    mockedSaveShipmentDraft.mockResolvedValue(undefined);
+    mockedClearShipmentDraft.mockResolvedValue(undefined);
+  });
+
+  // (issue #73) Un 401 en fond démonte l'écran et détruisait le client, le n° de transport, les
+  // lots chargés. On restaure le brouillon au montage.
+  it('restaure le client, le transport et les lots après une session expirée', async () => {
+    mockedLoadShipmentDraft.mockResolvedValue({
+      customerId: 'c-1',
+      shipmentId: 'EXP-2026-042',
+      carrier: 'Transporteur Nord',
+      address: '9 quai des Docks',
+      lots: [{ batch: batch({ id: 'b-ship', lot_number: 'LOT-CHARGE-7' }), quantity: '15' }],
+    });
+
+    render(<ExpeditionScreen />);
+
+    // Le n° de transport et le lot chargé reviennent, sans re-scan ni re-saisie.
+    await waitFor(() => expect(screen.getByDisplayValue('EXP-2026-042')).toBeTruthy());
+    expect(screen.getByText(/LOT-CHARGE-7/)).toBeTruthy();
   });
 
   // ⚠️ LE test de la course. La vérification passe par le réseau : plusieurs scans peuvent être en
