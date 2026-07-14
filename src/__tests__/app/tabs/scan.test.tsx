@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { Linking } from 'react-native';
 import { router } from 'expo-router';
 
 import ScanScreen from '@/app/(tabs)/scan';
@@ -6,6 +7,13 @@ import { lookupBatch } from '@/lib/batches';
 import { ApiError } from '@/lib/errors';
 
 const mockOnBarcodeScanned = { current: undefined as ((result: { data: string }) => void) | undefined };
+
+// La permission est pilotable par test : l'écran change de forme selon `granted`/`canAskAgain`.
+// Défaut = accordée, pour que les tests de scan ci-dessous voient bien la caméra.
+const mockPermission = {
+  current: { granted: true, canAskAgain: true } as { granted: boolean; canAskAgain: boolean },
+};
+const mockRequestPermission = jest.fn();
 
 jest.mock('expo-router', () => ({
   router: { push: jest.fn() },
@@ -25,7 +33,7 @@ jest.mock('expo-camera', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { Text: RNText } = require('react-native');
   return {
-    useCameraPermissions: () => [{ granted: true }, jest.fn()],
+    useCameraPermissions: () => [mockPermission.current, mockRequestPermission],
     CameraView: (props: { onBarcodeScanned?: (r: { data: string }) => void }) => {
       mockOnBarcodeScanned.current = props.onBarcodeScanned;
       return <RNText>camera</RNText>;
@@ -49,6 +57,9 @@ describe('écran de scan', () => {
     jest.clearAllMocks();
     mockOnBarcodeScanned.current = undefined;
     mockedLookup.mockResolvedValue(UNKNOWN);
+    // Chaque test repart caméra accordée ; les tests de permission écrasent ce défaut.
+    mockPermission.current = { granted: true, canAskAgain: true };
+    jest.spyOn(Linking, 'openSettings').mockResolvedValue(undefined);
   });
 
   it('ouvre la FICHE du lot quand le lot scanné existe déjà', async () => {
@@ -223,6 +234,50 @@ describe('écran de scan', () => {
         pathname: '/batch/[id]',
         params: { id: 'bat-1' },
       });
+    });
+  });
+
+  // ─── Caméra refusée : l'app ne doit PAS mourir ─────────────────────────────
+  describe('caméra non autorisée', () => {
+    // LE bug : l'écran de permission remplaçait TOUT le contenu, saisie manuelle comprise. Un
+    // opérateur ayant refusé la caméra ne pouvait plus taper le moindre numéro de lot — app morte.
+    it('laisse la saisie manuelle accessible même sans caméra', async () => {
+      mockPermission.current = { granted: false, canAskAgain: true };
+      mockedLookup.mockResolvedValue(FOUND);
+      render(<ScanScreen />);
+
+      const input = screen.getByPlaceholderText('3761234567890123');
+      fireEvent.changeText(input, 'FRN-77');
+      fireEvent(input, 'submitEditing');
+
+      await waitFor(() => {
+        expect(mockedRouter.push).toHaveBeenCalledWith({
+          pathname: '/batch/[id]',
+          params: { id: 'bat-1' },
+        });
+      });
+    });
+
+    // Tant qu'on peut encore demander, le bouton relance le dialogue système.
+    it('redemande l’accès tant que le refus n’est pas définitif', () => {
+      mockPermission.current = { granted: false, canAskAgain: true };
+      render(<ScanScreen />);
+
+      fireEvent.press(screen.getByText(/^Autoriser l.accès$/));
+      expect(mockRequestPermission).toHaveBeenCalledTimes(1);
+      expect(Linking.openSettings).not.toHaveBeenCalled();
+    });
+
+    // Refus DÉFINITIF (canAskAgain false) : rappeler requestPermission() ne rouvrirait aucun
+    // dialogue — bouton mort. On ne le propose donc plus ; on renvoie vers les réglages système.
+    it('renvoie vers les réglages quand le refus est définitif', () => {
+      mockPermission.current = { granted: false, canAskAgain: false };
+      render(<ScanScreen />);
+
+      expect(screen.queryByText(/^Autoriser l.accès$/)).toBeNull();
+      fireEvent.press(screen.getByText('Ouvrir les réglages'));
+      expect(Linking.openSettings).toHaveBeenCalledTimes(1);
+      expect(mockRequestPermission).not.toHaveBeenCalled();
     });
   });
 });
