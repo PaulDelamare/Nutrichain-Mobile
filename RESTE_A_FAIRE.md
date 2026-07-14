@@ -458,14 +458,16 @@ même._
       _(C'était la première fois que le scan caméra était démontré sur ce projet — toutes les
       vérifications précédentes passaient par la saisie manuelle.)_
 
-- [ ] 🔴 **Le décodeur web télécharge son WASM depuis un CDN, à l'exécution.** Chrome sous Windows
-      n'implémente pas `BarcodeDetector` : expo-camera charge un polyfill qui va chercher
+- [x] 🔴 **Le décodeur web téléchargeait son WASM depuis un CDN, à l'exécution.** Chrome sous Windows
+      n'implémente pas `BarcodeDetector` : expo-camera chargeait un polyfill qui allait chercher
       `zxing_reader.wasm` sur **`fastly.jsdelivr.net`** (constaté dans le journal réseau).
       _Conséquence : **démo sans Internet = scan caméra mort**, sur une application dont l'argument
-      de vente est « ça marche hors ligne ». La salle de soutenance doit avoir du réseau — ou le
-      premier scan échoue devant le jury._
-      → Servir le `.wasm` en local (`prepareZXingModule` / `setZXingModuleOverrides` vers un fichier
-      du dépôt). **MOBILE. Petit, et c'est un risque de démo.**
+      de vente est « ça marche hors ligne ». La salle de soutenance était une dépendance technique._
+
+      ✅ **FAIT et PROUVÉ** — le `.wasm` est servi depuis le dépôt (`public/`), et le polyfill est
+      installé au démarrage : expo-camera ne charge le sien que si aucun n'est en place.
+      **Vérifié Internet COUPÉ** (toute requête non-localhost bloquée) : l'app ne demande plus RIEN
+      à l'extérieur, et la caméra décode quand même.
 
 ### 10.1 🔴 Ce qui reste ouvert sur le scan
 
