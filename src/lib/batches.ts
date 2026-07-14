@@ -161,15 +161,31 @@ function toBatchDetail(b: BatchApi): BatchDetail {
 }
 
 /**
- * Fiche d'un lot (`GET /api/logistics/batches/:id`, include produit+unité).
- * Renvoie `null` si introuvable / hors réseau — l'écran affiche un état vide.
+ * Ce qu'on peut honnêtement dire d'une fiche lot — QUATRE issues, jamais un `null` fourre-tout.
+ *
+ * Avant, `catch { return null }` confondait un lot introuvable (404), un refus de droits (403) et une
+ * panne réseau sous le même écran vide « indisponible », sans bouton Réessayer. `lookupBatch` faisait
+ * pourtant déjà la distinction dans ce fichier. On l'aligne.
  */
-export async function loadBatch(id: string): Promise<BatchDetail | null> {
+export type BatchDetailResult =
+  | { kind: 'ok'; batch: BatchDetail }
+  /** 404 : ce lot n'existe pas. Réponse DÉFINITIVE — rien à réessayer. */
+  | { kind: 'unknown' }
+  /** 403 : pas les droits sur ce lot. PERMANENT — rejouer avec les mêmes droits ne changera rien. */
+  | { kind: 'forbidden' }
+  /** Réseau / 401 / 500 : on n'a pas pu demander. TRANSITOIRE — l'écran propose de réessayer. */
+  | { kind: 'unverifiable'; error: unknown };
+
+/** Fiche d'un lot (`GET /api/logistics/batches/:id`, include produit+unité). Ne REJETTE jamais. */
+export async function loadBatch(id: string): Promise<BatchDetailResult> {
   try {
     const { data } = await apiClient.get<{ data: BatchApi }>(`/api/logistics/batches/${id}`);
-    return toBatchDetail(data.data);
-  } catch {
-    return null;
+    return { kind: 'ok', batch: toBatchDetail(data.data) };
+  } catch (error: unknown) {
+    if (error instanceof ApiError && error.status === 404) return { kind: 'unknown' };
+    if (error instanceof ApiError && error.status === 403) return { kind: 'forbidden' };
+    // Tout le reste (panne réseau, 401, 500) est une incertitude, pas une réponse : le dire.
+    return { kind: 'unverifiable', error };
   }
 }
 
