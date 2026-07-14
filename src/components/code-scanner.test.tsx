@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import { Linking } from 'react-native';
+import { Linking, Platform } from 'react-native';
 
 import { CodeScanner } from './code-scanner';
 
@@ -81,5 +81,23 @@ describe('scanner d’emplacement', () => {
     fireEvent.press(screen.getByText('Ouvrir les réglages'));
     expect(Linking.openSettings).toHaveBeenCalledTimes(1);
     expect(mockRequestPermission).not.toHaveBeenCalled();
+  });
+
+  // ⚠️ (issue #58) Sur le WEB, react-native-web n'implémente PAS `Linking.openSettings` (son module
+  // Linking n'a qu'openURL/canOpenURL/addEventListener) → l'appel lève une TypeError, et la démo se
+  // fait dans un navigateur. On ne propose donc PAS « Ouvrir les réglages » : une consigne navigateur.
+  it('sur le web, remplace « Ouvrir les réglages » par une consigne navigateur (openSettings y plante)', () => {
+    const originalOS = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+    try {
+      mockPermission.current = { granted: false, canAskAgain: false };
+      render(<CodeScanner visible title="Scanner" hint="Placez le code" onClose={jest.fn()} onScan={jest.fn()} />);
+
+      expect(screen.getByText(/réglages de votre navigateur/i)).toBeTruthy();
+      expect(screen.queryByText('Ouvrir les réglages')).toBeNull();
+      expect(Linking.openSettings).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(Platform, 'OS', { value: originalOS, configurable: true });
+    }
   });
 });
