@@ -3,6 +3,7 @@ import Toast from 'react-native-toast-message';
 
 import AlertDecisionScreen from '@/app/alert/[id]';
 import { loadAlertDecision, releaseAndResolve, resolveAlert, type AlertDecision } from '@/lib/alerts';
+import { ApiError } from '@/lib/errors';
 
 jest.mock('@/lib/alerts', () => ({
   ...jest.requireActual('@/lib/alerts'),
@@ -55,7 +56,7 @@ async function ouvrirLEcran() {
 describe('écran de décision sur une alerte froid', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockedLoad.mockResolvedValue(decision);
+    mockedLoad.mockResolvedValue({ kind: 'active', decision });
     mockedRelease.mockResolvedValue(undefined);
     mockedResolve.mockResolvedValue(undefined);
   });
@@ -117,5 +118,73 @@ describe('écran de décision sur une alerte froid', () => {
 
     await waitFor(() => expect(mockedResolve).toHaveBeenCalledWith('alert-1', ''));
     expect(mockedRelease).not.toHaveBeenCalled();
+  });
+
+  // ⚠️ LE test. Sur une panne réseau, l'écran affichait « Alerte introuvable — elle a peut-être déjà
+  // été résolue sur un autre poste », AVEC UNE COCHE VERTE. À un opérateur qui est dans une chambre
+  // froide, sans réseau, devant une excursion thermique en cours.
+  it('ne dit PAS « déjà résolue » quand il n’a pas pu vérifier', async () => {
+    mockedLoad.mockResolvedValue({ kind: 'unverifiable', error: new ApiError('Erreur réseau', 0) });
+
+    render(<AlertDecisionScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/Impossible de vérifier cette alerte/)).toBeTruthy()
+    );
+    expect(screen.getByText(/n’est PAS résolue pour autant/)).toBeTruthy();
+    expect(screen.queryByText(/déjà résolue/)).toBeNull();
+  });
+
+  it('permet de réessayer au lieu de laisser l’opérateur dans un cul-de-sac', async () => {
+    mockedLoad.mockResolvedValueOnce({
+      kind: 'unverifiable',
+      error: new ApiError('Erreur réseau', 0),
+    });
+    mockedLoad.mockResolvedValue({ kind: 'active', decision });
+
+    render(<AlertDecisionScreen />);
+
+    await waitFor(() => expect(screen.getByText('↻ Réessayer')).toBeTruthy());
+    fireEvent.press(screen.getByText('↻ Réessayer'));
+
+    await waitFor(() => expect(screen.getByText('Enregistrer sans isolation')).toBeTruthy());
+  });
+
+  // « Absente de la liste » ne veut PAS dire « résolue » : l'API ne filtre rien, une alerte résolue
+  // y figure encore. Absente = identifiant inconnu. Pas de coche verte rassurante.
+  it('dit « inconnue », pas « résolue », sur un identifiant absent', async () => {
+    mockedLoad.mockResolvedValue({ kind: 'unknown' });
+
+    render(<AlertDecisionScreen />);
+
+    await waitFor(() => expect(screen.getByText(/Alerte inconnue/)).toBeTruthy());
+    expect(screen.queryByText(/déjà résolue/)).toBeNull();
+  });
+
+  // Le VRAI « déjà résolue ». Avant, l'écran rouvrait l'incident ENTIER, boutons actifs — et
+  // « Maintenir la quarantaine » répondait 200 (endpoint idempotent) : un toast de SUCCÈS sur des
+  // lots déjà remis en stock.
+  it('ne rouvre pas l’incident sur une alerte déjà clôturée', async () => {
+    mockedLoad.mockResolvedValue({ kind: 'resolved', alert: decision.alert });
+
+    render(<AlertDecisionScreen />);
+
+    await waitFor(() => expect(screen.getByText(/Alerte déjà résolue/)).toBeTruthy());
+    expect(screen.queryByText('Maintenir la quarantaine')).toBeNull();
+    expect(screen.queryByText('Enregistrer sans isolation')).toBeNull();
+  });
+
+  // Sans lot isolé, la levée boucle sur RIEN : elle ne relâche rien, clôture l'alerte, et annonce
+  // « Lot(s) remis en stock ». Le bouton ne doit pas exister.
+  it('ne propose pas de lever une quarantaine quand aucun lot n’est isolé', async () => {
+    mockedLoad.mockResolvedValue({
+      kind: 'active',
+      decision: { ...decision, batches: [] },
+    });
+
+    render(<AlertDecisionScreen />);
+
+    await waitFor(() => expect(screen.getByText(/Aucun lot isolé/)).toBeTruthy());
+    expect(screen.queryByText('Enregistrer sans isolation')).toBeNull();
   });
 });
