@@ -25,16 +25,32 @@ describe('loadActiveColdAlerts', () => {
       },
     });
 
-    const alerts = await loadActiveColdAlerts();
+    const result = await loadActiveColdAlerts();
 
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0].id).toBe('1');
+    expect(result.kind).toBe('ok');
+    expect(result.kind === 'ok' && result.alerts).toHaveLength(1);
+    expect(result.kind === 'ok' && result.alerts[0].id).toBe('1');
   });
 
-  it('ne fait pas échouer l’accueil quand les alertes sont inaccessibles', async () => {
+  // ⚠️ L'ancien test exigeait `[]` quand les alertes sont inaccessibles — il CANONISAIT le mensonge.
+  // Renvoyer une liste vide fait afficher « ALERTES FROID : 0 » à l'accueil : la seule information
+  // sanitaire de l'écran annonce « tout va bien », pendant une excursion thermique.
+  it('AVOUE qu’il n’a pas pu vérifier, au lieu de renvoyer une liste vide', async () => {
     apiClient.get.mockRejectedValue(new Error('offline'));
 
-    await expect(loadActiveColdAlerts()).resolves.toEqual([]);
+    const result = await loadActiveColdAlerts();
+
+    expect(result.kind).toBe('unverifiable');
+  });
+
+  // Le contrat : cette fonction ne REJETTE jamais. `unverifiable` EST le canal d'erreur — sinon
+  // l'accueil (qui l'appelle sans `.catch`) partirait en rejet non géré, et resterait sur son zéro.
+  it('ne rejette JAMAIS, même sur une erreur inattendue', async () => {
+    apiClient.get.mockImplementation(() => {
+      throw new Error('boom');
+    });
+
+    await expect(loadActiveColdAlerts()).resolves.toMatchObject({ kind: 'unverifiable' });
   });
 });
 
