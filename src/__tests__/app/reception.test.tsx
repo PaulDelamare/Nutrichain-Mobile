@@ -191,4 +191,34 @@ describe('écran de réception', () => {
 
     expect(screen.getByDisplayValue('SHIP-2026-001')).toBeTruthy();
   });
+  // ⚠️ `Promise.all` faisait rejeter la promesse ENTIÈRE dès qu'un appel échouait. Un 403 sur les
+  // fournisseurs — le cas d'un `operator`, à qui l'API réserve cette route — emportait les produits,
+  // pourtant revenus en 200 : deux listes vides, et plus aucune réception possible.
+  it('affiche les produits même quand la liste des fournisseurs est refusee', async () => {
+    catalog.loadSuppliers.mockRejectedValue(new Error('403'));
+
+    render(<ReceptionScreen />);
+
+    // Le produit, lui, a répondu : il DOIT être là.
+    await waitFor(() => expect(screen.getByText('Lait cru')).toBeTruthy());
+  });
+
+  it('DIT quelle liste manque, au lieu d’un « catalogue indisponible » muet', async () => {
+    catalog.loadSuppliers.mockRejectedValue(new Error('403'));
+
+    render(<ReceptionScreen />);
+
+    // Sans fournisseur, la réception est impossible : un sélecteur vide et un bouton gris ne le
+    // disent pas. L'écran doit l'annoncer.
+    await waitFor(() =>
+      expect(screen.getByText(/Aucun fournisseur accessible/i)).toBeTruthy()
+    );
+  });
+
+  it('n’annonce rien quand tout le catalogue a répondu', async () => {
+    render(<ReceptionScreen />);
+
+    await waitFor(() => expect(screen.getByText('Ferme Dupont')).toBeTruthy());
+    expect(screen.queryByText(/Aucun fournisseur accessible/i)).toBeNull();
+  });
 });
