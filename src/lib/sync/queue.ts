@@ -1,6 +1,7 @@
 import * as Crypto from 'expo-crypto';
 
 import { getDatabase, withTransaction } from '../db';
+import { MAX_RETRY_DELAY_MS } from './backoff';
 import { getUserId } from '../session';
 import {
   BLOCKED_STATUSES,
@@ -240,14 +241,23 @@ export async function getPendingOperations(
     return [];
   }
 
+  // ⚠️ La seconde borne (`next_attempt_at > now + MAX`) n'est pas une précaution de style.
+  //
+  // `next_attempt_at` a été écrit avec l'horloge du téléphone. Si celle-ci avançait de six mois au
+  // moment de l'échec puis revenait à l'heure, le délai est daté dans un futur lointain — et le
+  // scan reste « en attente » À VIE : jamais renvoyé, jamais bloqué, jamais visible comme un
+  // problème, pendant que l'écran promet qu'il partira. Aucun délai légitime ne dépasse le plafond
+  // du backoff : au-delà, la date est aberrante, donc échue.
   const rows = await db.getAllAsync<OperationRow>(
     `SELECT ${SELECT_COLUMNS}
        FROM operations
-      WHERE status = 'PENDING' AND user_id = ? AND next_attempt_at <= ?
+      WHERE status = 'PENDING' AND user_id = ?
+        AND (next_attempt_at <= ? OR next_attempt_at > ?)
       ORDER BY created_at ASC
       LIMIT ?`,
     userId,
     now,
+    now + MAX_RETRY_DELAY_MS,
     limit
   );
 

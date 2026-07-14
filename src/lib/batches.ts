@@ -1,4 +1,5 @@
 import { apiClient } from './api';
+import { serverNow } from './server-time';
 import { readCache, writeCache } from './cache';
 import { ApiError } from './errors';
 import { isPackageCode, LOT_NUMBER_MAX_LENGTH, scanCandidates } from './gs1';
@@ -18,22 +19,12 @@ export interface Batch {
 }
 
 /**
- * Statuts qui interdisent à un lot de quitter le stock : c'est la garde sanitaire centrale
- * (quarantaine qualité, excursion de température, rappel). Le serveur la fait respecter, mais
- * l'opérateur doit le savoir devant sa cuve — pas dix minutes plus tard, à la synchronisation.
- */
-const BLOCKING_STATUSES = [
-  'EN_ATTENTE_QC',
-  'BLOQUE',
-  'ALERTE',
-  'EXPEDIE',
-  'EPUISE',
-  'EN_PRODUCTION',
-];
-
-/**
  * Pourquoi ce lot ne peut pas sortir, EN FRANÇAIS. L'opérateur lisait le code brut du statut
  * (« EN_ATTENTE_QC ») : ça ne lui dit ni ce qui bloque, ni qui peut le débloquer.
+ *
+ * C'est la garde sanitaire centrale — quarantaine qualité, excursion de température, rappel,
+ * péremption — et elle n'existe qu'ICI. Le serveur la fait respecter de son côté, mais l'opérateur
+ * doit le savoir devant sa cuve, pas dix minutes plus tard à la synchronisation.
  */
 export function blockingReason(batch: Batch): string | null {
   const statut = batch.statut.toUpperCase();
@@ -53,8 +44,24 @@ export function blockingReason(batch: Batch): string | null {
   if (statut === 'EN_PRODUCTION') {
     return 'Ce lot est en cours de transformation.';
   }
-  if (batch.date_peremption && new Date(batch.date_peremption).getTime() <= Date.now()) {
-    return 'La date de péremption de ce lot est dépassée.';
+  // ⚠️ La péremption se tranche sur l'horloge du SERVEUR, jamais sur celle du téléphone.
+  //
+  // `Date.now()` est réglable à la main, et le système la resynchronise sans prévenir. Une horloge
+  // reculée de deux mois faisait ACCEPTER un lot périmé en transformation et en expédition : la
+  // garde sanitaire de l'application était l'horloge de l'appareil.
+  //
+  // Et quand on ne connaît pas l'heure du serveur, on ne conclut RIEN. Retomber sur l'horloge
+  // locale « en attendant » reproduirait exactement le bug, en silence. On refuse le lot en le
+  // DISANT : mieux vaut un opérateur qui rappelle le bureau qu'un lot périmé dans une cuve.
+  if (batch.date_peremption) {
+    const reference = serverNow();
+
+    if (reference.kind === 'unknown') {
+      return "Impossible de vérifier la péremption : l'heure du serveur est inconnue (aucune connexion depuis l'installation). Reconnectez-vous une fois avant d'utiliser ce lot.";
+    }
+    if (new Date(batch.date_peremption).getTime() <= reference.now) {
+      return 'La date de péremption de ce lot est dépassée.';
+    }
   }
 
   return null;
@@ -102,13 +109,15 @@ export function findBatchByCode(code: string, batches: Batch[]): Batch | undefin
   return undefined;
 }
 
+/**
+ * ⚠️ Dérivé de `blockingReason`, et non réécrit à côté.
+ *
+ * La règle sanitaire vivait en DEUX exemplaires : une correction dans l'un laissait l'autre intact.
+ * Un lot pouvait donc être « refusé avec un motif » d'un côté, et « utilisable » de l'autre — et
+ * c'est le second qui garde la cuve. Un seul endroit décide.
+ */
 export function isUsableBatch(batch: Batch): boolean {
-  if (BLOCKING_STATUSES.includes(batch.statut.toUpperCase())) {
-    return false;
-  }
-
-  // Une date de péremption dépassée est un motif de blocage sanitaire, pas un détail.
-  return !batch.date_peremption || new Date(batch.date_peremption).getTime() > Date.now();
+  return blockingReason(batch) === null;
 }
 
 // ── La fiche d'un lot : ce qu'on affiche une fois le lot ouvert ───────────────────────────────

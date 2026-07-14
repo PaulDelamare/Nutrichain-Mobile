@@ -9,15 +9,22 @@ import {
 } from './batches';
 import { readCache, writeCache } from './cache';
 import { ApiError } from './errors';
+import { serverNow } from './server-time';
 
 jest.mock('./cache');
+jest.mock('./server-time');
 jest.mock('./api', () => ({ apiClient: { get: jest.fn() } }));
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { apiClient } = require('./api') as { apiClient: { get: jest.Mock } };
 const cache = jest.mocked({ readCache, writeCache });
+const mockedServerNow = jest.mocked(serverNow);
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  // Par défaut, l'app a déjà vu le serveur : son horloge est connue et fidèle.
+  mockedServerNow.mockReturnValue({ kind: 'ok', now: Date.now() });
+});
 
 function batch(overrides: Partial<Batch> = {}): Batch {
   return {
@@ -163,6 +170,41 @@ describe('isUsableBatch', () => {
     const demain = new Date(Date.now() + 86_400_000).toISOString();
 
     expect(isUsableBatch(batch({ date_peremption: demain }))).toBe(true);
+  });
+
+  it('REFUSE un lot périmé même si le téléphone se croit deux mois dans le passé', () => {
+    // ⚠️ LA faille sanitaire. La péremption était tranchée sur `Date.now()` — une horloge que
+    // l'opérateur peut régler à la main. Reculée de deux mois, elle faisait ACCEPTER un lot périmé
+    // en transformation et en expédition. La garde sanitaire de l'application était l'horloge du
+    // téléphone. Elle est désormais celle du serveur.
+    const perimeDepuisUnMois = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    const telephoneDansLePasse = Date.now() - 60 * 86_400_000;
+
+    jest.spyOn(Date, 'now').mockReturnValue(telephoneDansLePasse);
+    mockedServerNow.mockReturnValue({ kind: 'ok', now: telephoneDansLePasse + 60 * 86_400_000 });
+
+    expect(isUsableBatch(batch({ date_peremption: perimeDepuisUnMois }))).toBe(false);
+
+    jest.spyOn(Date, 'now').mockRestore();
+  });
+
+  it('REFUSE de trancher la péremption quand l’heure du serveur est inconnue — et le DIT', () => {
+    // Retomber sur l'horloge locale « en attendant » reproduirait le bug, en silence. Un opérateur
+    // qui rappelle le bureau vaut mieux qu'un lot périmé dans une cuve.
+    mockedServerNow.mockReturnValue({ kind: 'unknown' });
+    const demain = new Date(Date.now() + 86_400_000).toISOString();
+
+    const reason = blockingReason(batch({ date_peremption: demain }));
+
+    expect(reason).toContain("l'heure du serveur est inconnue");
+    expect(isUsableBatch(batch({ date_peremption: demain }))).toBe(false);
+  });
+
+  it('ne demande PAS l’heure pour un lot sans date de péremption', () => {
+    // Un lot sans DLC ne doit pas devenir inutilisable hors ligne : il n'y a rien à trancher.
+    mockedServerNow.mockReturnValue({ kind: 'unknown' });
+
+    expect(isUsableBatch(batch({ date_peremption: null }))).toBe(true);
   });
 });
 

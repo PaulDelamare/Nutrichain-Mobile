@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 
 import { clearCache } from './cache';
 import { ApiError, toApiError } from './errors';
+import { rememberServerTime } from './server-time';
 import { clearToken, clearUserId, getToken, getUserId, saveToken, saveUserId } from './session';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000';
@@ -44,8 +45,16 @@ apiClient.interceptors.request.use(async (config) => {
 });
 
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Chaque réponse date le serveur. On l'apprend au passage : c'est la seule horloge que
+    // l'appareil ne peut pas fausser, et c'est elle qui tranche les péremptions.
+    void rememberServerTime(response.headers?.date);
+    return response;
+  },
   async (error: AxiosError) => {
+    // Même une erreur porte l'heure du serveur : un 401 la donne aussi bien qu'un 200.
+    void rememberServerTime(error.response?.headers?.date);
+
     const apiError = toApiError(error);
 
     // Un 401 « api_key » accuse la configuration de l'app, pas la session : purger le jeton
