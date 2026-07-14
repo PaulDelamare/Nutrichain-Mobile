@@ -1,5 +1,5 @@
 import { apiClient } from './api';
-import { readCache, writeCache } from './cache';
+import { CACHE_TTL_MS, readCache, writeCache } from './cache';
 
 export interface Customer {
   id: string;
@@ -35,7 +35,8 @@ export async function loadCustomers(): Promise<Customer[]> {
     await writeCache('customers', data.data);
     return data.data;
   } catch (error) {
-    const cached = await readCache<Customer[]>('customers');
+    // Cache borné par le TTL : un client retiré ne doit pas rester sélectionnable indéfiniment.
+    const cached = await readCache<Customer[]>('customers', CACHE_TTL_MS);
     if (cached) {
       return cached;
     }
