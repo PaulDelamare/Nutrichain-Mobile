@@ -98,25 +98,59 @@ function toNumber(value: string | null | undefined): number | null {
 }
 
 /**
- * Recompose la vue de décision. Renvoie `null` si l'alerte est introuvable
- * (déjà résolue par un autre poste, ou id erroné).
+ * Ce qu'on peut dire d'une alerte — QUATRE issues, et pas une de moins.
+ *
+ * L'écran n'en connaissait que deux (« j'ai la décision » / `null`), et il traduisait `null` par
+ * **« déjà résolue sur un autre poste »**, coche verte à l'appui. Or :
+ *
+ * - une **panne réseau** faisait JETER la fonction → l'écran retombait sur ce même `null` → il
+ *   annonçait l'incident réglé à un opérateur qui, précisément, est dans une chambre froide ;
+ * - `GET /organization/alerts` ne filtre RIEN (vérifié : `organization.service.ts`) : une alerte
+ *   résolue **figure encore dans la liste**. Donc « absente » ne veut pas dire « résolue », mais
+ *   **« id inconnu »** ;
+ * - et une alerte **vraiment résolue ailleurs** était donc TROUVÉE → l'écran affichait l'incident
+ *   entier, **boutons actifs**. « Maintenir la quarantaine » appelait alors un endpoint idempotent
+ *   qui répond 200 → **toast de succès** sur des lots qui sont déjà en stock.
+ *
+ * Cette fonction ne REJETTE jamais : `unverifiable` EST le canal d'erreur.
  */
-export async function loadAlertDecision(alertId: string): Promise<AlertDecision | null> {
+export type AlertDecisionResult =
+  | { kind: 'active'; decision: AlertDecision }
+  /** Trouvée, mais clôturée : c'est ICI, et seulement ici, que « déjà résolue » est vrai. */
+  | { kind: 'resolved'; alert: Alert }
+  /** Absente de la liste : identifiant inconnu. On ne prétend pas savoir pourquoi. */
+  | { kind: 'unknown' }
+  | { kind: 'unverifiable'; error: unknown };
+
+/**
+ * ⚠️ Aucun rendu PARTIEL. Si l'équipement ou les lots manquent, on refuse d'afficher : un écran
+ * qui montre l'incident sans ses lots proposerait « Lever la quarantaine », annoncerait
+ * « 0 lot(s) seront remis en stock », **ne relâcherait rien** — et clôturerait quand même l'alerte
+ * en annonçant « Lot(s) remis en stock ». Mieux vaut ne rien montrer que montrer à moitié.
+ */
+async function buildAlertDecision(alertId: string): Promise<AlertDecisionResult> {
   const { data: alertsResp } = await apiClient.get<{ data: Alert[] }>(
     '/api/organization/alerts'
   );
   const alert = alertsResp.data.find((a) => a.id === alertId);
-  if (!alert) return null;
+  if (!alert) return { kind: 'unknown' };
+
+  if (alert.statut !== 'ACTIVE') {
+    return { kind: 'resolved', alert };
+  }
 
   const materielId = alert.id_materiel ?? null;
   if (!materielId) {
     return {
-      alert,
-      equipmentNom: null,
-      lieuNom: null,
-      tempMesuree: null,
-      tempSeuilMax: null,
-      batches: [],
+      kind: 'active',
+      decision: {
+        alert,
+        equipmentNom: null,
+        lieuNom: null,
+        tempMesuree: null,
+        tempSeuilMax: null,
+        batches: [],
+      },
     };
   }
 
@@ -137,13 +171,24 @@ export async function loadAlertDecision(alertId: string): Promise<AlertDecision 
     }));
 
   return {
-    alert,
-    equipmentNom: equipment?.nom ?? null,
-    lieuNom: equipment?.lieu?.nom ?? null,
-    tempMesuree: toNumber(equipment?.temp_actuelle),
-    tempSeuilMax: toNumber(equipment?.temp_seuil_max),
-    batches,
+    kind: 'active',
+    decision: {
+      alert,
+      equipmentNom: equipment?.nom ?? null,
+      lieuNom: equipment?.lieu?.nom ?? null,
+      tempMesuree: toNumber(equipment?.temp_actuelle),
+      tempSeuilMax: toNumber(equipment?.temp_seuil_max),
+      batches,
+    },
   };
+}
+
+export async function loadAlertDecision(alertId: string): Promise<AlertDecisionResult> {
+  try {
+    return await buildAlertDecision(alertId);
+  } catch (error: unknown) {
+    return { kind: 'unverifiable', error };
+  }
 }
 
 // ── Actions de décision (écritures en ligne, hors file offline) ────────────────

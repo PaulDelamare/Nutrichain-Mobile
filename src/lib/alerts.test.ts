@@ -1,4 +1,5 @@
 import { loadActiveColdAlerts, loadAlertDecision, releaseAndResolve, resolveAlert } from './alerts';
+import { ApiError } from './errors';
 
 jest.mock('./api', () => ({
   apiClient: { get: jest.fn(), post: jest.fn(), patch: jest.fn() },
@@ -102,7 +103,10 @@ describe('loadAlertDecision', () => {
   it('compose alerte + équipement + lots en quarantaine du bon équipement', async () => {
     wireEndpoints();
 
-    const decision = await loadAlertDecision('a1');
+    const result = await loadAlertDecision('a1');
+
+    expect(result.kind).toBe('active');
+    const decision = result.kind === 'active' ? result.decision : null;
 
     expect(decision?.equipmentNom).toBe('Chambre A');
     expect(decision?.lieuNom).toBe('Chambre froide A');
@@ -120,12 +124,54 @@ describe('loadAlertDecision', () => {
     });
   });
 
-  it('renvoie null quand l’alerte est introuvable (déjà résolue ailleurs)', async () => {
+  // ⚠️ L'ancien test encodait le mensonge : « absente de la liste ⇒ null », que l'écran traduisait
+  // par « déjà résolue sur un autre poste ». Or `GET /organization/alerts` ne filtre RIEN : une
+  // alerte résolue Y FIGURE ENCORE. Absente veut donc dire « identifiant inconnu ».
+  it('dit « inconnue » — pas « résolue » — quand l’alerte est absente de la liste', async () => {
     apiClient.get.mockResolvedValue({ data: { data: [] } });
 
-    expect(await loadAlertDecision('inconnue')).toBeNull();
+    expect(await loadAlertDecision('inconnue')).toEqual({ kind: 'unknown' });
     // Pas d'appel équipement/quarantaine si l'alerte n'existe pas.
     expect(apiClient.get).toHaveBeenCalledTimes(1);
+  });
+
+  // Le VRAI « déjà résolue » : l'alerte est TROUVÉE, mais clôturée. Avant, l'écran affichait
+  // l'incident entier, boutons actifs — et « Maintenir la quarantaine » répondait 200 (idempotent),
+  // donc un toast de SUCCÈS sur des lots déjà remis en stock.
+  it('reconnaît une alerte déjà résolue au lieu de rouvrir l’incident', async () => {
+    apiClient.get.mockResolvedValue({
+      data: {
+        data: [
+          { id: 'a1', type: 'TEMP_EXCURSION', statut: 'RESOLVED', message: 'Pic 7,4 °C', id_materiel: 'eq1' },
+        ],
+      },
+    });
+
+    const result = await loadAlertDecision('a1');
+
+    expect(result.kind).toBe('resolved');
+    // On n'interroge ni l'équipement ni les lots : il n'y a plus de décision à prendre.
+    expect(apiClient.get).toHaveBeenCalledTimes(1);
+  });
+
+  // ⚠️ LE test. Sur une panne réseau, la fonction JETAIT — et l'écran retombait sur son état
+  // « introuvable », c'est-à-dire « déjà résolue », coche verte comprise. À un opérateur qui est
+  // dans une chambre froide, sans réseau, devant une excursion thermique.
+  it('AVOUE qu’il n’a pas pu vérifier, au lieu de laisser croire à une résolution', async () => {
+    apiClient.get.mockRejectedValue(new ApiError('Erreur réseau', 0));
+
+    const result = await loadAlertDecision('a1');
+
+    expect(result.kind).toBe('unverifiable');
+  });
+
+  // Le contrat : elle ne rejette JAMAIS. L'écran l'appelle sans `.catch`.
+  it('ne rejette JAMAIS, même sur une erreur inattendue', async () => {
+    apiClient.get.mockImplementation(() => {
+      throw new Error('boom');
+    });
+
+    await expect(loadAlertDecision('a1')).resolves.toMatchObject({ kind: 'unverifiable' });
   });
 });
 

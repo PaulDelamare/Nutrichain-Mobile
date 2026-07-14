@@ -18,7 +18,7 @@ import {
   loadAlertDecision,
   releaseAndResolve,
   resolveAlert,
-  type AlertDecision,
+  type AlertDecisionResult,
 } from '@/lib/alerts';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { toastError } from '@/lib/toast';
@@ -62,22 +62,32 @@ function Row({ label, value, valueColor }: { label: string; value: string; value
 export default function AlertDecisionScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const [decision, setDecision] = useState<AlertDecision | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [result, setResult] = useState<AlertDecisionResult | null>(null);
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  // « Réessayer » : on rejoue l'effet, plutôt que de dupliquer le chargement.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let mounted = true;
-    loadAlertDecision(id)
-      .then((d) => mounted && setDecision(d))
-      .catch((error: unknown) => mounted && toastError('Chargement de l’alerte impossible', error))
-      .finally(() => mounted && setLoading(false));
+
+    // `loadAlertDecision` ne rejette jamais : l'incertitude est dans sa valeur de retour.
+    loadAlertDecision(id).then((r) => mounted && setResult(r));
+
     return () => {
       mounted = false;
     };
-  }, [id]);
+  }, [id, attempt]);
+
+  // Le retour à l'écran de chargement se fait ICI, pas dans l'effet : sans ça, le second essai
+  // laisserait l'écran d'échec affiché pendant qu'on recharge.
+  const retry = () => {
+    setResult(null);
+    setAttempt((a) => a + 1);
+  };
+
+  const decision = result?.kind === 'active' ? result.decision : null;
 
   // Succès : un toast puis retour — l'accueil recharge ses alertes au focus, l'alerte résolue disparaît.
   const done = useCallback((text1: string, text2: string) => {
@@ -133,7 +143,7 @@ export default function AlertDecisionScreen() {
     setConfirming(true);
   };
 
-  if (loading) {
+  if (result === null) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={DANGER} />
@@ -141,12 +151,35 @@ export default function AlertDecisionScreen() {
     );
   }
 
-  if (!decision) {
+  // ⚠️ On n'a PAS PU demander. C'est ici que l'écran annonçait « déjà résolue » — coche verte
+  // comprise — à un opérateur qui est, précisément, dans une chambre froide sans réseau.
+  if (result.kind === 'unverifiable') {
     return (
       <View style={[styles.center, styles.notFoundWrap]}>
-        <Ionicons name="checkmark-circle-outline" size={48} color="#9CA3AF" />
+        <Ionicons name="cloud-offline-outline" size={48} color={TEMP_OVER} />
         <Text style={styles.notFound}>
-          Alerte introuvable — elle a peut-être déjà été résolue sur un autre poste.
+          Impossible de vérifier cette alerte — le serveur est injoignable.{'\n'}
+          <Text style={styles.notFoundStrong}>Elle n’est PAS résolue pour autant.</Text>
+        </Text>
+        <TouchableOpacity onPress={retry} hitSlop={8}>
+          <Text style={styles.backLink}>↻ Réessayer</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={8}>
+          <Text style={styles.backLink}>← Retour</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // Absente de la liste. `GET /organization/alerts` ne filtre RIEN (une alerte résolue y figure
+  // encore) : « absente » veut donc dire « identifiant inconnu », pas « résolue ». On ne prétend
+  // pas savoir pourquoi — et surtout pas de coche verte rassurante.
+  if (result.kind === 'unknown') {
+    return (
+      <View style={[styles.center, styles.notFoundWrap]}>
+        <Ionicons name="help-circle-outline" size={48} color="#9CA3AF" />
+        <Text style={styles.notFound}>
+          Alerte inconnue — cet identifiant ne correspond à aucune alerte de votre organisation.
         </Text>
         <TouchableOpacity onPress={() => router.back()} hitSlop={8}>
           <Text style={styles.backLink}>← Retour</Text>
@@ -155,8 +188,31 @@ export default function AlertDecisionScreen() {
     );
   }
 
-  const { alert, batches } = decision;
+  // Trouvée, mais clôturée. C'est le SEUL cas où « déjà résolue » est vrai — et le seul où la
+  // coche verte a un sens. Avant, l'écran affichait ici l'incident ENTIER, boutons actifs : et
+  // « Maintenir la quarantaine » appelait un endpoint idempotent qui répond 200, donc un TOAST DE
+  // SUCCÈS sur des lots déjà remis en stock.
+  if (result.kind === 'resolved') {
+    return (
+      <View style={[styles.center, styles.notFoundWrap]}>
+        <Ionicons name="checkmark-circle-outline" size={48} color="#059669" />
+        <Text style={styles.notFound}>
+          Alerte déjà résolue — elle a été traitée sur un autre poste.{'\n'}
+          <Text style={styles.notFoundStrong}>{result.alert.message}</Text>
+        </Text>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={8}>
+          <Text style={styles.backLink}>← Retour</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const active = result.decision;
+  const { alert, batches } = active;
   const primaryBatch = batches[0];
+  // Sans lot à relâcher, « Lever la quarantaine » boucle sur RIEN : elle ne relâche rien, clôture
+  // l'alerte, et annonce « Lot(s) remis en stock ». Le bouton ne doit pas exister.
+  const canRelease = batches.length > 0;
 
   return (
     <View style={styles.screen}>
@@ -180,7 +236,7 @@ export default function AlertDecisionScreen() {
 
         <View style={styles.badges}>
           {alert.niveau_gravite ? <Badge text={alert.niveau_gravite} /> : null}
-          {decision.lieuNom ? <Badge text={decision.lieuNom} /> : null}
+          {active.lieuNom ? <Badge text={active.lieuNom} /> : null}
           <Badge text={`${batches.length} lot${batches.length > 1 ? 's' : ''}`} />
         </View>
       </LinearGradient>
@@ -190,16 +246,16 @@ export default function AlertDecisionScreen() {
         <View style={styles.card}>
           <Text style={styles.cardLabel}>INCIDENT</Text>
           <Row label="Lot" value={primaryBatch?.lotNumber ?? '—'} />
-          <Row label="Produit" value={primaryBatch?.produitNom ?? decision.equipmentNom ?? '—'} />
+          <Row label="Produit" value={primaryBatch?.produitNom ?? active.equipmentNom ?? '—'} />
           <Row
             label="Température mesurée"
-            value={formatTemp(decision.tempMesuree)}
+            value={formatTemp(active.tempMesuree)}
             valueColor={TEMP_OVER}
           />
-          <Row label="Seuil max" value={formatTemp(decision.tempSeuilMax)} />
+          <Row label="Seuil max" value={formatTemp(active.tempSeuilMax)} />
           <Row
             label="Depuis"
-            value={`${formatTime(alert.created_at)}${decision.lieuNom ? ` — ${decision.lieuNom}` : ''}`}
+            value={`${formatTime(alert.created_at)}${active.lieuNom ? ` — ${active.lieuNom}` : ''}`}
           />
           {batches.length > 1 ? (
             <Text style={styles.moreBatches}>
@@ -235,14 +291,23 @@ export default function AlertDecisionScreen() {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.btnSecondary, submitting && styles.btnDisabled]}
-            onPress={releaseWithoutIsolation}
-            disabled={submitting}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.btnSecondaryText}>Enregistrer sans isolation</Text>
-          </TouchableOpacity>
+          {canRelease ? (
+            <TouchableOpacity
+              style={[styles.btnSecondary, submitting && styles.btnDisabled]}
+              onPress={releaseWithoutIsolation}
+              disabled={submitting}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.btnSecondaryText}>Enregistrer sans isolation</Text>
+            </TouchableOpacity>
+          ) : (
+            // Aucun lot n'est isolé sur cet équipement : il n'y a RIEN à relâcher. Le bouton
+            // annoncerait « 0 lot(s) seront remis en stock », ne relâcherait rien, et clôturerait
+            // quand même l'alerte en disant « Lot(s) remis en stock ».
+            <Text style={styles.noBatches}>
+              Aucun lot isolé sur cet équipement : il n’y a rien à remettre en stock.
+            </Text>
+          )}
 
           {primaryBatch ? (
             <TouchableOpacity
@@ -260,7 +325,7 @@ export default function AlertDecisionScreen() {
       <ConfirmDialog
         visible={confirming}
         title="Lever la quarantaine ?"
-        message={`${decision.batches.length} lot(s) seront remis en stock. Décision tracée dans l’audit.`}
+        message={`${active.batches.length} lot(s) seront remis en stock. Décision tracée dans l’audit.`}
         confirmLabel="Lever"
         destructive
         onCancel={() => setConfirming(false)}
@@ -278,6 +343,8 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FBEBEA' },
   notFoundWrap: { padding: 24, gap: 16 },
   notFound: { textAlign: 'center', color: '#6B7280', fontSize: 15, lineHeight: 22 },
+  notFoundStrong: { color: '#374151', fontWeight: '700' },
+  noBatches: { textAlign: 'center', color: '#6B7280', fontSize: 13, lineHeight: 18, paddingVertical: 8 },
   backLink: { color: DANGER, fontWeight: '700', fontSize: 15 },
 
   /* ── Header ──────────────────────────────────────────────── */
