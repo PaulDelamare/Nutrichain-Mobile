@@ -267,8 +267,11 @@ export default function ReceptionScreen() {
 
       Toast.show({
         type: 'success',
+        // ⚠️ Ne PAS promettre « dès que le réseau reviendra » : l'écoute réseau meurt avec l'app,
+        // il n'y a pas de tâche de fond. Un opérateur qui ferme l'app verrait sa file dormir sans
+        // que rien ne le prévienne. On conditionne honnêtement l'envoi à l'application ouverte.
         text1: 'Réception enregistrée',
-        text2: 'Elle sera synchronisée dès que le réseau reviendra.',
+        text2: 'Elle partira dès le retour du réseau, l’application ouverte.',
       });
       router.back();
 

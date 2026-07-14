@@ -29,8 +29,10 @@ function trigger(): void {
 
 /**
  * Déclencheur de la synchronisation différée : sans lui, les opérations enregistrées
- * hors réseau attendraient un appui manuel sur « Synchroniser », et la promesse faite
- * à l'opérateur (« synchronisée dès que le réseau reviendra ») serait fausse.
+ * hors réseau attendraient un appui manuel sur « Synchroniser ». Il tient la promesse faite à
+ * l'opérateur (« elle partira au retour du réseau ») — mais SEULEMENT tant que l'application
+ * tourne : cette écoute meurt avec l'app, il n'y a pas de tâche de fond. Le toast de réception le
+ * dit honnêtement (« l'application ouverte ») plutôt que de promettre un envoi en arrière-plan.
  *
  * On ne réagit qu'aux TRANSITIONS vers l'état joignable : les plateformes réémettent
  * l'état courant sans changement, et relancer à chaque notification martèlerait l'API.
