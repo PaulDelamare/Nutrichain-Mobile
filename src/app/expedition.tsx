@@ -21,12 +21,12 @@ import { OptionPicker } from '@/components/option-picker';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import {
   blockingReason,
-  findBatchByCode,
   isUsableBatch,
   loadBatches,
+  lookupBatch,
   type Batch,
 } from '@/lib/batches';
-import { isNetworkError } from '@/lib/errors';
+import { getErrorMessage, isNetworkError } from '@/lib/errors';
 import {
   buildShipment,
   createShipment,
@@ -56,6 +56,7 @@ export default function ExpeditionScreen() {
   const [address, setAddress] = useState('');
   const [lots, setLots] = useState<LotLine[]>([]);
   const [scanning, setScanning] = useState(false);
+  const [isChecking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
   // Un state se lit trop tard : deux appuis dans le même tick passeraient tous les deux.
   const submitting = useRef(false);
@@ -78,20 +79,45 @@ export default function ExpeditionScreen() {
       .finally(() => setLoading(false));
   }, []);
 
-  const handleScan = (code: string) => {
+  // La vérification d'un lot passe par le réseau, et l'opérateur peut annuler pendant ce temps.
+  // Chaque scan a donc un numéro de session : fermer la modale l'invalide. Sans ça, une palette
+  // annulée s'ajoutait quand même à la liste une seconde plus tard — et partait dans le camion.
+  const scanSession = useRef(0);
+  const cancelScan = () => {
+    scanSession.current += 1;
+    setChecking(false);
+    setScanning(false);
+  };
+
+  const handleScan = async (code: string) => {
+    const session = (scanSession.current += 1);
+    setChecking(true);
+
+    const found = await lookupBatch(code, batches);
+
+    // L'opérateur a fermé la modale (ou relancé un scan) : ce résultat ne l'intéresse plus. Ne rien
+    // ajouter, ne rien dire, et surtout ne pas refermer une modale qui ne nous appartient plus.
+    if (scanSession.current !== session) return;
+
+    setChecking(false);
     setScanning(false);
 
-    if (batches.length === 0) {
-      toastMessage('Lots indisponibles', "Rechargez l'écran : la liste des lots n'a pas été chargée.");
+    if (found.kind === 'unverifiable') {
+      // « Lot inconnu » serait un mensonge : on n'a pas pu demander. L'expédition exige de toute
+      // façon le réseau (le bouton d'envoi est désactivé hors ligne), donc rien n'est perdu.
+      toastMessage(
+        'Lot non vérifié',
+        `${getErrorMessage(found.error)} Impossible de confirmer que ce lot existe.`
+      );
       return;
     }
 
-    const batch = findBatchByCode(code, batches);
-
-    if (!batch) {
+    if (found.kind === 'unknown') {
       toastMessage('Lot inconnu', 'Ce code ne correspond à aucun lot de votre organisation.');
       return;
     }
+
+    const { batch } = found;
 
     // La garde sanitaire de sortie d'usine : un lot bloqué (non-conformité, excursion froid,
     // rappel) ne doit JAMAIS quitter le stock. L'opérateur l'apprend devant le camion.
@@ -311,9 +337,10 @@ export default function ExpeditionScreen() {
 
       <CodeScanner
         visible={scanning}
+        busy={isChecking}
         title="Scanner un lot"
         hint="Placez l'étiquette du lot chargé dans le cadre."
-        onClose={() => setScanning(false)}
+        onClose={cancelScan}
         onScan={handleScan}
       />
     </View>

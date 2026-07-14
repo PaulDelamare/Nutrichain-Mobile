@@ -439,15 +439,20 @@ même._
 
 ### 10.1 🔴 Ce qui reste ouvert sur le scan
 
-- [ ] **Au-delà de 100 lots, la transformation et l'expédition MENTENT.** Elles résolvent le code
+- [x] **Au-delà de 100 lots, la transformation et l'expédition MENTAIENT.** Elles résolvaient le code
       **localement**, contre `GET /traceability/batches` — plafonné à `take: 100` côté serveur, sans
       pagination ni recherche par numéro.
       _Conséquence : un lot d'ingrédient à longue conservation (sucre, poudre de lait) créé il y a
-      plus de 100 lots est annoncé **« Lot inconnu — ce code ne correspond à aucun lot de votre
+      plus de 100 lots était annoncé **« Lot inconnu — ce code ne correspond à aucun lot de votre
       organisation »** devant le camion. C'est faux : le lot existe, il est en stock, son étiquette
-      est bonne. Et l'onglet Scan, lui, le trouve (il interroge le serveur). **Même étiquette, deux
+      est bonne. Et l'onglet Scan, lui, le trouvait (il interroge le serveur). **Même étiquette, deux
       réponses contradictoires selon l'écran.**_
-      → Replier sur `resolveBatch()` (qui existe déjà) quand la liste locale ne donne rien. **MOBILE.**
+
+      ✅ **FAIT** — `lookupBatch()` : **le seul point de résolution** (onglet Scan, cuve, camion).
+      Local d'abord, serveur en repli. Trois issues distinctes : `found` / `unknown` (le serveur a
+      répondu 404) / `unverifiable` (**on n'a pas pu demander** — ne JAMAIS dire « inconnu »).
+      Prouvé en base : avec 111 lots, le catalogue en renvoie 100, le lot cible en est absent, et le
+      serveur le résout.
 
 - [ ] **La saisie manuelle est INACCESSIBLE tant que la caméra n'est pas autorisée.** L'écran de
       permission remplace *tout* le contenu de l'onglet Scan.

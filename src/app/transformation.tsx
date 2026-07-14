@@ -20,14 +20,14 @@ import { CodeScanner } from '@/components/code-scanner';
 import { OptionPicker } from '@/components/option-picker';
 import {
   blockingReason,
-  findBatchByCode,
   isUsableBatch,
   loadBatches,
+  lookupBatch,
   type Batch,
 } from '@/lib/batches';
 import { loadProducts, type Product } from '@/lib/catalog';
 import { findEquipmentByCode, loadEquipment, type Equipment } from '@/lib/equipment';
-import { isNetworkError } from '@/lib/errors';
+import { getErrorMessage, isNetworkError } from '@/lib/errors';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import {
   buildTransformation,
@@ -62,6 +62,7 @@ export default function TransformationScreen() {
   const [quantity, setQuantity] = useState('');
   const [unit, setUnit] = useState('');
   const [scanning, setScanning] = useState<Scanning>(null);
+  const [isChecking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
   // Un state se lit trop tard : deux appuis dans le même tick passeraient tous les deux.
   const submitting = useRef(false);
@@ -91,11 +92,23 @@ export default function TransformationScreen() {
     ...batches.map((batch) => batch.unite_code),
   ]);
 
-  const handleScan = (code: string) => {
-    const target = scanning;
+  // La vérification d'un lot passe par le réseau, et l'opérateur peut annuler pendant ce temps.
+  // Chaque scan a donc un numéro de session : fermer la modale l'invalide. Sans ça, un lot annulé
+  // s'ajoutait quand même une seconde plus tard — et le `finally` refermait la modale de la CUVE,
+  // ouverte entre-temps, sous les doigts de l'opérateur.
+  const scanSession = useRef(0);
+  const cancelScan = () => {
+    scanSession.current += 1;
+    setChecking(false);
     setScanning(null);
+  };
+
+  const handleScan = async (code: string) => {
+    const target = scanning;
 
     if (target === 'cuve') {
+      setScanning(null);
+
       if (equipment.length === 0) {
         toastMessage('Matériels indisponibles', "Rechargez l'écran : la liste n'a pas été chargée.");
         return;
@@ -116,22 +129,40 @@ export default function TransformationScreen() {
       return;
     }
 
-    // Sans cette garde, un catalogue vide fait répondre « lot inconnu » — un mensonge : c'est le
-    // chargement qui a échoué, pas l'étiquette qui est fausse.
-    if (batches.length === 0) {
-      toastMessage('Lots indisponibles', "Rechargez l'écran : la liste des lots n'a pas été chargée.");
+    const session = (scanSession.current += 1);
+    setChecking(true);
+
+    // Le catalogue local ne porte que les 100 lots les plus récents : c'est le serveur qui tranche.
+    // Sortir ici sur `batches.length === 0` (comme avant) court-circuitait le seul recours dans la
+    // situation MÊME où il est indispensable.
+    const found = await lookupBatch(code, batches);
+
+    // L'opérateur a fermé la modale (ou relancé un scan) : ce résultat ne l'intéresse plus. Ne rien
+    // ajouter, ne rien dire, et surtout ne pas refermer une modale qui ne nous appartient plus.
+    if (scanSession.current !== session) return;
+
+    setChecking(false);
+    setScanning(null);
+
+    if (found.kind === 'unverifiable') {
+      // « Lot inconnu » serait un mensonge : on n'a pas pu demander. Une transformation exige de
+      // toute façon le réseau (le bouton d'envoi est désactivé hors ligne) : rien n'est perdu.
+      toastMessage(
+        'Lot non vérifié',
+        `${getErrorMessage(found.error)} Impossible de confirmer que ce lot existe.`
+      );
       return;
     }
 
-    const batch = findBatchByCode(code, batches);
-
-    if (!batch) {
+    if (found.kind === 'unknown') {
       toastMessage('Lot inconnu', 'Ce code ne correspond à aucun lot de votre organisation.');
       return;
     }
 
-    // La garde sanitaire, annoncée DEVANT la cuve : un lot en quarantaine ou périmé ne doit
-    // jamais entrer en production. Le serveur le refuserait, mais dix minutes trop tard.
+    const { batch } = found;
+
+    // La garde sanitaire, annoncée DEVANT la cuve : un lot en quarantaine ou périmé ne doit jamais
+    // entrer en production. Le serveur le refuserait, mais dix minutes trop tard.
     if (!isUsableBatch(batch)) {
       toastMessage(
         `Lot ${batch.lot_number} inutilisable`,
@@ -141,8 +172,8 @@ export default function TransformationScreen() {
     }
 
     // `unite_code` est du texte libre à la réception : un lot peut naître en « U », que l'enum du
-    // serveur ignore. L'accepter ici le laisserait s'ajouter en vert, puis griser le bouton
-    // d'envoi à vie sans jamais dire lequel des lots est en cause.
+    // serveur ignore. L'accepter ici le laisserait s'ajouter en vert, puis griser le bouton d'envoi
+    // à vie sans jamais dire lequel des lots est en cause.
     if (!isTransformableUnit(batch.unite_code)) {
       toastMessage(
         `Lot ${batch.lot_number} non transformable`,
@@ -383,13 +414,15 @@ export default function TransformationScreen() {
 
       <CodeScanner
         visible={scanning !== null}
+        // Rattaché à la CIBLE : sinon le scanner de la cuve afficherait « Vérification du lot… ».
+        busy={isChecking && scanning === 'lot'}
         title={scanning === 'cuve' ? 'Scanner la cuve' : 'Scanner un lot'}
         hint={
           scanning === 'cuve'
             ? "Placez l'étiquette de la cuve dans le cadre."
             : "Placez l'étiquette du lot dans le cadre."
         }
-        onClose={() => setScanning(null)}
+        onClose={cancelScan}
         onScan={handleScan}
       />
     </View>

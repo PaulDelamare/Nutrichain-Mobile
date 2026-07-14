@@ -4,7 +4,7 @@ import {
   isUsableBatch,
   loadBatch,
   loadBatches,
-  resolveBatch,
+  lookupBatch,
   type Batch,
 } from './batches';
 import { readCache, writeCache } from './cache';
@@ -222,55 +222,129 @@ describe('blockingReason', () => {
   });
 });
 
-describe('resolveBatch — le lot qu’on vient de scanner', () => {
-  it('interroge le serveur avec le numéro de lot', async () => {
-    apiClient.get.mockResolvedValue({
-      data: {
-        data: {
-          id: 'bat-1',
-          lot_number: 'FRN-77',
-          statut: 'EN_STOCK',
-          quantite_actuelle: '400',
-          unite_code: 'kg',
-          date_peremption: null,
-          date_creation: null,
-          produit: { nom: 'Beurre' },
-        },
-      },
-    });
 
-    const found = await resolveBatch('FRN-77');
+describe('lookupBatch — retrouver le lot scanné, où qu’il soit', () => {
+  const enLocal = batch({ id: 'local-1', lot_number: '260711-ABC123' });
+
+  const reponseApi = (id: string, lotNumber: string) => ({
+    data: {
+      data: {
+        id,
+        lot_number: lotNumber,
+        statut: 'EN_STOCK',
+        quantite_actuelle: '400',
+        unite_code: 'kg',
+        date_peremption: '2027-01-01T00:00:00.000Z',
+        date_creation: null,
+        produit: { nom: 'Beurre' },
+      },
+    },
+  });
+
+  it('trouve un lot du catalogue local sans déranger le serveur', async () => {
+    const found = await lookupBatch('260711-ABC123', [enLocal]);
+
+    expect(found).toEqual({ kind: 'found', batch: enLocal });
+    expect(apiClient.get).not.toHaveBeenCalled();
+  });
+
+  // 🔴 LE trou que cette fonction ferme. `GET /traceability/batches` est plafonné à 100 lots : un
+  // ingrédient à longue conservation, plus ancien, était annoncé « Lot inconnu — ce code ne
+  // correspond à aucun lot de votre organisation » DEVANT LE CAMION. C'est faux : il est en stock,
+  // et c'est nous qui avons imprimé son étiquette.
+  it('trouve un lot ABSENT du catalogue local en interrogeant le serveur', async () => {
+    apiClient.get.mockResolvedValue(reponseApi('vieux-1', '250101-OLD001'));
+
+    const found = await lookupBatch('250101-OLD001', [enLocal]);
+
+    expect(found.kind).toBe('found');
+    expect(apiClient.get).toHaveBeenCalledWith('/api/logistics/batches/resolve', {
+      params: { lot_number: '250101-OLD001' },
+    });
+  });
+
+  it('décode notre étiquette (un lien GS1) avant d’interroger le serveur', async () => {
+    apiClient.get.mockResolvedValue(reponseApi('vieux-1', '250101-OLD001'));
+
+    await lookupBatch('https://api.nutrichain.fr/gs1/01/3042040209123/10/250101-OLD001', []);
 
     expect(apiClient.get).toHaveBeenCalledWith('/api/logistics/batches/resolve', {
-      params: { lot_number: 'FRN-77' },
+      params: { lot_number: '250101-OLD001' },
     });
-    expect(found?.id).toBe('bat-1');
-    expect(found?.produitNom).toBe('Beurre');
   });
 
-  it('rend null quand le lot n’existe pas (404)', async () => {
+  // ⚠️ Le décodeur lit « 10ABC » comme « ABC ». Interroger le serveur avec l'interprétation AVANT
+  // le code brut engagerait un AUTRE lot — sans erreur, sans message.
+  it('interroge le serveur avec le code BRUT avant son interprétation', async () => {
+    apiClient.get.mockResolvedValue(reponseApi('vrai', '10ABC'));
+
+    await lookupBatch('10ABC', []);
+
+    expect(apiClient.get).toHaveBeenNthCalledWith(1, '/api/logistics/batches/resolve', {
+      params: { lot_number: '10ABC' },
+    });
+  });
+
+  it('résout aussi un identifiant de lot, que l’endpoint des numéros refuserait', async () => {
+    const uuid = '3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
+    apiClient.get.mockResolvedValue(reponseApi(uuid, '250101-OLD001'));
+
+    const found = await lookupBatch(uuid, []);
+
+    expect(found.kind).toBe('found');
+    expect(apiClient.get).toHaveBeenCalledWith(`/api/logistics/batches/${uuid}`, undefined);
+  });
+
+  it('dit « inconnu » quand le serveur a répondu qu’il ne connaît pas ce lot', async () => {
     apiClient.get.mockRejectedValue(new ApiError('Lot introuvable', 404, 'batch'));
 
-    await expect(resolveBatch('INCONNU')).resolves.toBeNull();
+    await expect(lookupBatch('JAMAIS-VU', [])).resolves.toEqual({ kind: 'unknown' });
   });
 
-  // ⚠️ LE test de cette fonction. Avaler une panne réseau dans le même `null` que le 404 ferait
-  // conclure « ce lot n'existe pas » alors qu'on n'en sait RIEN — et l'opérateur réceptionnerait
-  // une seconde fois une palette déjà en stock. C'est le doublon que toute cette chaîne empêche.
-  it('RELANCE une panne réseau au lieu de la confondre avec un lot inconnu', async () => {
+  // ⚠️ LA distinction. « Lot inconnu » sur une panne réseau est un MENSONGE : le lot existe
+  // peut-être. C'est ce mensonge qui pousse l'opérateur à resaisir une marchandise déjà en stock.
+  it('ne dit JAMAIS « inconnu » quand il n’a pas pu demander', async () => {
     apiClient.get.mockRejectedValue(new ApiError('Erreur réseau', 0));
 
-    await expect(resolveBatch('FRN-77')).rejects.toThrow('Erreur réseau');
+    const found = await lookupBatch('260711-ABC123', []);
+
+    expect(found.kind).toBe('unverifiable');
   });
 
   it.each([
-    ['une erreur serveur', new ApiError('Boom', 500)],
     ['une session expirée', new ApiError('Non authentifié', 401, 'auth')],
-    ['un refus de droits', new ApiError('Accès refusé', 403, 'auth')],
-    ['un numéro invalide', new ApiError('Trop long', 400, 'lot_number')],
-  ])('relance %s — seul un 404 signifie « lot inconnu »', async (_cas, error) => {
+    ['une erreur serveur', new ApiError('Boom', 500)],
+  ])('traite %s comme une incertitude, pas comme un lot inconnu', async (_cas, error) => {
     apiClient.get.mockRejectedValue(error);
 
-    await expect(resolveBatch('FRN-77')).rejects.toThrow();
+    expect((await lookupBatch('260711-ABC123', [])).kind).toBe('unverifiable');
+  });
+
+  it('n’interroge pas le serveur avec un code qui ne peut pas être un numéro de lot', async () => {
+    const found = await lookupBatch('A'.repeat(40), []);
+
+    expect(found).toEqual({ kind: 'unknown' });
+    expect(apiClient.get).not.toHaveBeenCalled();
+  });
+
+  // Un SSCC identifie un COLIS. L'envoyer au serveur ferait attendre l'opérateur pour rien — et,
+  // hors réseau, lui annoncerait « ce lot n'a pas pu être vérifié » sur un code qui ne peut
+  // structurellement PAS être un lot.
+  it('n’interroge pas le serveur pour un colis (SSCC)', async () => {
+    const found = await lookupBatch('00376112345678901234', []);
+
+    expect(found).toEqual({ kind: 'unknown' });
+    expect(apiClient.get).not.toHaveBeenCalled();
+  });
+
+  // Un seul aller-retour, toujours : le code brut et son interprétation ne diffèrent que si le code
+  // est structurellement GS1 — et dans ce cas le brut (une URL, une chaîne d'AI) dépasse la limite
+  // des 20 caractères, donc n'est pas interrogeable.
+  it('ne fait qu’un seul appel serveur pour une étiquette GS1', async () => {
+    apiClient.get.mockRejectedValue(new ApiError('Lot introuvable', 404, 'batch'));
+
+    await lookupBatch('https://api.nutrichain.fr/gs1/01/3042040209123/10/250101-OLD001', []);
+
+    expect(apiClient.get).toHaveBeenCalledTimes(1);
   });
 });

@@ -15,10 +15,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 
-import { resolveBatch } from '@/lib/batches';
+import { lookupBatch } from '@/lib/batches';
 import { isEquipmentCode } from '@/lib/equipment';
 import { ApiError, getErrorMessage } from '@/lib/errors';
-import { parseScannedCode } from '@/lib/gs1';
 import { BRAND, BRAND_GRADIENT } from '@/lib/theme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -53,11 +52,9 @@ export default function ScanScreen() {
 
     const goToReception = () => router.push({ pathname: '/reception', params: { code } });
 
-    const parsed = parseScannedCode(code);
-
     // L'étiquette d'un frigo n'est pas un lot : sans ce test, elle ouvrait un formulaire de
     // réception avec le code du matériel dans le numéro d'expédition.
-    if (isEquipmentCode(parsed.raw)) {
+    if (isEquipmentCode(code)) {
       Toast.show({
         type: 'error',
         text1: 'Ceci est un emplacement',
@@ -67,45 +64,39 @@ export default function ScanScreen() {
       return;
     }
 
-    // Aucun numéro de lot lisible (un SSCC de colis, un GTIN seul) : rien à interroger, c'est une
-    // marchandise qui arrive.
-    if (!parsed.lotNumber) {
+    // La résolution est partagée avec la transformation et l'expédition : une même étiquette doit
+    // donner partout la même réponse. Elle essaie le code BRUT avant son interprétation — sans ça,
+    // un lot fournisseur nommé « 10ABC » serait lu « ABC » et on ouvrirait la fiche d'un AUTRE lot.
+    const found = await lookupBatch(code);
+
+    if (found.kind === 'found') {
+      router.push({ pathname: '/batch/[id]', params: { id: found.batch.id } });
+      return;
+    }
+
+    if (found.kind === 'unknown') {
+      // Le serveur a répondu, et il ne connaît pas ce lot : c'est une marchandise qui arrive.
       goToReception();
       return;
     }
 
-    // Le `try` n'entoure QUE l'appel serveur : y inclure la navigation ferait ouvrir une réception
-    // (dans le `catch`) pour un lot que le serveur venait de reconnaître.
-    let batch: Awaited<ReturnType<typeof resolveBatch>>;
-    try {
-      batch = await resolveBatch(parsed.lotNumber);
-    } catch (error: unknown) {
-      // Une session expirée a déjà renvoyé l'opérateur vers l'écran de connexion : empiler une
-      // réception par-dessus le laisserait dans un formulaire qu'il ne pourra jamais envoyer.
-      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-        Toast.show({ type: 'error', text1: 'Scan impossible', text2: getErrorMessage(error) });
-        stayHere();
-        return;
-      }
-
-      // Hors réseau, on ne SAIT PAS si ce lot existe déjà. Dire « lot inconnu » serait un mensonge,
-      // et l'opérateur réceptionnerait une palette déjà en stock. On le dit — et on ouvre quand
-      // même la réception : saisir hors ligne est la raison d'être de cette application.
-      Toast.show({
-        type: 'error',
-        text1: 'Lot non vérifié',
-        text2: `${getErrorMessage(error)} Vérifiez qu'il n'est pas déjà en stock.`,
-      });
-      goToReception();
+    // Une session expirée a déjà renvoyé l'opérateur vers l'écran de connexion : empiler une
+    // réception par-dessus le laisserait dans un formulaire qu'il ne pourra jamais envoyer.
+    const { error } = found;
+    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+      Toast.show({ type: 'error', text1: 'Scan impossible', text2: getErrorMessage(error) });
+      stayHere();
       return;
     }
 
-    if (batch) {
-      router.push({ pathname: '/batch/[id]', params: { id: batch.id } });
-      return;
-    }
-
-    // 404, et 404 SEULEMENT : ce lot n'existe pas → c'est une marchandise qui arrive.
+    // Hors réseau, on ne SAIT PAS si ce lot existe déjà. Dire « lot inconnu » serait un mensonge, et
+    // l'opérateur réceptionnerait une palette déjà en stock. On le dit — et on ouvre quand même la
+    // réception : saisir hors ligne est la raison d'être de cette application.
+    Toast.show({
+      type: 'error',
+      text1: 'Lot non vérifié',
+      text2: `${getErrorMessage(error)} Vérifiez qu'il n'est pas déjà en stock.`,
+    });
     goToReception();
   }, []);
 
