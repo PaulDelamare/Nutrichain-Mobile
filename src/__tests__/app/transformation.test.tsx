@@ -108,6 +108,29 @@ describe('écran de transformation', () => {
     mockedLoadBatches.mockResolvedValue([batch()]);
   });
 
+  // ⚠️ (issue #72) L'unité du produit fini n'était liée à RIEN : un opérateur produisant un produit
+  // référencé en kg pouvait choisir L → le lot naît en litres, le stock devient faux, personne ne le
+  // voit. L'unité doit être DÉRIVÉE du produit choisi et VERROUILLÉE.
+  it('verrouille l’unité sur celle du produit fini choisi', async () => {
+    mockedLoadProducts.mockResolvedValue([
+      { id: 'p-kg', nom: 'Yaourt', unite_reference: 'kg', code_gtin: '1' },
+      { id: 'p-l', nom: 'Crème', unite_reference: 'L', code_gtin: '2' },
+    ]);
+    render(<TransformationScreen />);
+    await waitFor(() => expect(screen.getByText('Yaourt')).toBeTruthy());
+
+    // Tant qu'aucun produit n'est choisi, le sélecteur libre propose bien les deux unités.
+    expect(screen.getByText('L')).toBeTruthy();
+
+    fireEvent.press(screen.getByText('Yaourt')); // produit référencé en kg
+
+    // L'unité est verrouillée à KG (celle du produit) — « L » n'est plus une option choisissable.
+    await waitFor(() =>
+      expect(screen.getByText(/KG.*déterminée par le produit fini/i)).toBeTruthy()
+    );
+    expect(screen.queryByText('L')).toBeNull();
+  });
+
   it('garde les données chargées quand une seule route échoue', async () => {
     // Un `Promise.all` jetait les trois catalogues dès qu'un seul échouait : l'écran s'affichait
     // vide et répondait « lot inconnu » à des lots qui existent.

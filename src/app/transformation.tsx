@@ -92,6 +92,14 @@ export default function TransformationScreen() {
     ...batches.map((batch) => batch.unite_code),
   ]);
 
+  // (issue #72) L'unité du produit fini EST celle du produit — dérivée et VERROUILLÉE. Sinon un
+  // opérateur produisant un produit référencé en kg pouvait choisir L : le lot naît en litres,
+  // sera prélevé et expédié en litres, comparé à des stocks en kilos → stock faux, invisible.
+  // Le sélecteur libre d'unités n'a de sens que tant qu'aucun produit n'est choisi.
+  const selectedProduct = products.find((product) => product.id === productId);
+  const productUnit = selectedProduct ? selectedProduct.unite_reference.toUpperCase() : null;
+  const effectiveUnit = productUnit ?? unit;
+
   // La vérification d'un lot passe par le réseau, et l'opérateur peut annuler pendant ce temps.
   // Chaque scan a donc un numéro de session : fermer la modale l'invalide. Sans ça, un lot annulé
   // s'ajoutait quand même une seconde plus tard — et le `finally` refermait la modale de la CUVE,
@@ -200,7 +208,7 @@ export default function TransformationScreen() {
     productId,
     equipmentId: cuve?.id ?? '',
     quantity,
-    unit,
+    unit: effectiveUnit,
     inputs: parents.map((parent) => ({
       batchId: parent.batch.id,
       quantity: parent.quantity,
@@ -381,12 +389,26 @@ export default function TransformationScreen() {
               {producedIssue && <Text style={styles.error}>{producedIssue}</Text>}
             </View>
 
-            <OptionPicker
-              label="Unité"
-              options={units.map((value) => ({ value, label: value }))}
-              selected={unit}
-              onSelect={setUnit}
-            />
+            {/* Unité VERROUILLÉE sur celle du produit fini une fois celui-ci choisi (issue #72).
+                Le sélecteur libre ne réapparaît que si aucun produit n'est sélectionné. */}
+            {productUnit ? (
+              <View style={styles.field}>
+                <Text style={styles.label}>Unité</Text>
+                <View style={styles.lockedUnit}>
+                  <Ionicons name="lock-closed" size={14} color="#6B7280" />
+                  <Text style={styles.lockedUnitText}>
+                    {productUnit} — déterminée par le produit fini
+                  </Text>
+                </View>
+              </View>
+            ) : (
+              <OptionPicker
+                label="Unité"
+                options={units.map((value) => ({ value, label: value }))}
+                selected={unit}
+                onSelect={setUnit}
+              />
+            )}
 
             <TouchableOpacity
               style={[styles.submit, (!payload || !online) && styles.submitDisabled]}
@@ -499,6 +521,17 @@ const styles = StyleSheet.create({
   parentSubtitle: { fontSize: 12, color: '#6B7280' },
   parentRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   error: { fontSize: 12, color: '#DC2626', fontWeight: '500' },
+  // Unité verrouillée (déterminée par le produit fini) : une valeur en lecture seule, pas un choix.
+  lockedUnit: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  lockedUnitText: { fontSize: 15, fontWeight: '600', color: '#374151' },
   chip: {
     paddingHorizontal: 14,
     paddingVertical: 12,
