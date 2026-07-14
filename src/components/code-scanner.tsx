@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useEffect, useRef } from 'react';
-import { ActivityIndicator, Linking, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Linking, Modal, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { SCANNED_BARCODE_TYPES } from '@/lib/barcodes';
 
@@ -78,17 +78,28 @@ export function CodeScanner({ visible, title, hint, busy, onClose, onScan }: Cod
           <View style={styles.permission}>
             <Ionicons name="camera-outline" size={44} color="rgba(255,255,255,0.5)" />
             {/* `canAskAgain === false` = refus définitif : requestPermission() se résout sans
-                rouvrir le dialogue système, le bouton « Autoriser » ne ferait plus rien. On bascule
-                alors vers les réglages de l'app — le seul endroit où l'accès peut encore être rendu. */}
+                rouvrir le dialogue système, le bouton « Autoriser » ne ferait plus rien. Le recours
+                dépend de la plateforme :
+                - natif : les réglages de l'app (`Linking.openSettings`).
+                - ⚠️ web : react-native-web n'implémente PAS `openSettings` (TypeError) ; l'accès se
+                  rétablit dans les réglages du NAVIGATEUR, pour l'origine du site. On donne la
+                  consigne, sans bouton mort. */}
             {permission?.canAskAgain === false ? (
-              <>
+              Platform.OS === 'web' ? (
                 <Text style={styles.hint}>
-                  L&apos;accès à la caméra a été refusé. Activez-le dans les réglages.
+                  L&apos;accès à la caméra a été refusé. Autorisez-la dans les réglages de votre
+                  navigateur (icône à gauche de la barre d&apos;adresse), puis rechargez la page.
                 </Text>
-                <TouchableOpacity style={styles.permissionBtn} onPress={() => void Linking.openSettings()}>
-                  <Text style={styles.permissionBtnText}>Ouvrir les réglages</Text>
-                </TouchableOpacity>
-              </>
+              ) : (
+                <>
+                  <Text style={styles.hint}>
+                    L&apos;accès à la caméra a été refusé. Activez-le dans les réglages.
+                  </Text>
+                  <TouchableOpacity style={styles.permissionBtn} onPress={() => void Linking.openSettings()}>
+                    <Text style={styles.permissionBtnText}>Ouvrir les réglages</Text>
+                  </TouchableOpacity>
+                </>
+              )
             ) : (
               <>
                 <Text style={styles.hint}>La caméra est nécessaire pour scanner.</Text>

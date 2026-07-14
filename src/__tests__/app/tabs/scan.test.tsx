@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
-import { Linking } from 'react-native';
+import { Linking, Platform } from 'react-native';
 import { router } from 'expo-router';
 
 import ScanScreen from '@/app/(tabs)/scan';
@@ -278,6 +278,26 @@ describe('écran de scan', () => {
       fireEvent.press(screen.getByText('Ouvrir les réglages'));
       expect(Linking.openSettings).toHaveBeenCalledTimes(1);
       expect(mockRequestPermission).not.toHaveBeenCalled();
+    });
+
+    // ⚠️ (issue #58) Sur le WEB, `Linking.openSettings` n'existe pas (react-native-web) → TypeError,
+    // et la démo se fait dans un navigateur. On remplace le bouton par une consigne navigateur ; la
+    // saisie manuelle, elle, reste le recours (comme sur natif).
+    it('sur le web, remplace « Ouvrir les réglages » par une consigne navigateur', () => {
+      const originalOS = Platform.OS;
+      Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+      try {
+        mockPermission.current = { granted: false, canAskAgain: false };
+        render(<ScanScreen />);
+
+        expect(screen.getByText(/réglages de votre navigateur/i)).toBeTruthy();
+        expect(screen.queryByText('Ouvrir les réglages')).toBeNull();
+        expect(Linking.openSettings).not.toHaveBeenCalled();
+        // La saisie manuelle survit — le recours quand la caméra manque.
+        expect(screen.getByPlaceholderText('3761234567890123')).toBeTruthy();
+      } finally {
+        Object.defineProperty(Platform, 'OS', { value: originalOS, configurable: true });
+      }
     });
   });
 });

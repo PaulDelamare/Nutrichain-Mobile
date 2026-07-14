@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Dimensions,
   Linking,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -223,6 +224,11 @@ export default function ScanScreen() {
 // sans jamais rouvrir le dialogue système (bouton mort, l'opérateur tape dans le vide). Le seul
 // recours réel devient alors d'ouvrir les réglages de l'app — qu'on nomme explicitement.
 function PermissionPrompt({ canAskAgain, onRequest }: { canAskAgain: boolean; onRequest: () => void }) {
+  // ⚠️ Refus DÉFINITIF sur le WEB : react-native-web n'implémente PAS `Linking.openSettings`
+  // (TypeError). Et il n'y a pas de « réglages de l'app » sur le web — l'accès se rétablit dans les
+  // réglages du NAVIGATEUR, pour l'origine du site. On donne donc la consigne, sans bouton mort ;
+  // la saisie manuelle en dessous reste le recours.
+  const deniedOnWeb = !canAskAgain && Platform.OS === 'web';
   return (
     <View style={styles.permissionArea}>
       <View style={styles.permissionIcon}>
@@ -232,19 +238,25 @@ function PermissionPrompt({ canAskAgain, onRequest }: { canAskAgain: boolean; on
       <Text style={styles.permissionDesc}>
         {canAskAgain
           ? 'NutriChain a besoin de la caméra pour scanner les codes-barres et datamatrix. La saisie manuelle ci-dessous reste disponible.'
-          : "L'accès à la caméra a été refusé. Activez-le dans les réglages, ou utilisez la saisie manuelle ci-dessous."}
+          : deniedOnWeb
+            ? "L'accès à la caméra a été refusé. Autorisez-la dans les réglages de votre navigateur (icône à gauche de la barre d'adresse), puis rechargez la page. La saisie manuelle ci-dessous reste disponible."
+            : "L'accès à la caméra a été refusé. Activez-le dans les réglages, ou utilisez la saisie manuelle ci-dessous."}
       </Text>
-      <TouchableOpacity
-        style={styles.permissionBtn}
-        onPress={canAskAgain ? onRequest : () => void Linking.openSettings()}
-        activeOpacity={0.85}
-      >
-        <LinearGradient colors={BRAND_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={styles.permissionBtnGradient}>
-          <Text style={styles.permissionBtnText}>
-            {canAskAgain ? "Autoriser l'accès" : 'Ouvrir les réglages'}
-          </Text>
-        </LinearGradient>
-      </TouchableOpacity>
+      {/* Pas de bouton « Ouvrir les réglages » sur le web : openSettings y plante. La consigne
+          navigateur ci-dessus suffit, et la saisie manuelle reste disponible en dessous. */}
+      {!deniedOnWeb && (
+        <TouchableOpacity
+          style={styles.permissionBtn}
+          onPress={canAskAgain ? onRequest : () => void Linking.openSettings()}
+          activeOpacity={0.85}
+        >
+          <LinearGradient colors={BRAND_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={styles.permissionBtnGradient}>
+            <Text style={styles.permissionBtnText}>
+              {canAskAgain ? "Autoriser l'accès" : 'Ouvrir les réglages'}
+            </Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
