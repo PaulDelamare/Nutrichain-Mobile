@@ -41,6 +41,39 @@ npm run ios:native       # = expo run:ios     : idem iOS (signature Apple requis
 > (voir `.env.example`, ligne « Téléphone physique via USB »). Les dossiers natifs `android/` et `ios/`
 > sont régénérés à la volée et gitignorés — chacun build en local.
 
+**3. APK installable (démo terrain)** — un vrai `.apk` à _sideloader_ sur un téléphone Android. C'est
+le seul moyen de prouver ce qu'un navigateur ne peut pas : la caméra d'un vrai appareil, et le
+**vrai** mode hors-ligne (sur le web, `navigator.onLine` ment — il vaut `true` sur un Wi-Fi sans
+Internet). Deux voies, au choix — elles déplacent la contrainte sans la supprimer.
+
+**3a. Cloud — EAS Build** — aucun toolchain Android en local, mais **compte Expo** requis (gratuit) :
+
+```bash
+npx eas-cli login                                     # compte Expo (une seule fois)
+npx eas-cli build --platform android --profile preview
+```
+
+Au premier lancement, EAS lie le projet (`eas init`) et écrit un `projectId` dans `app.json` ; à la
+fin, il fournit une URL de téléchargement de l'`.apk`. Le profil `preview` (`eas.json`) force
+`buildType: apk` + `distribution: internal` : installable directement, sans passer par le Store.
+
+**3b. Local — Gradle** — aucun compte, mais **Android SDK + JDK 17** requis (le même toolchain que
+l'option 2 ci-dessus) :
+
+```bash
+npm run apk:local        # = expo prebuild --clean, puis gradlew assembleRelease
+# → android/app/build/outputs/apk/release/app-release.apk
+```
+
+Le build est **`release`** exprès (jamais `debug`) : le JS y est empaqueté, donc l'APK tourne **sans
+serveur Metro** — indispensable pour prouver le hors-ligne. Il est signé avec le keystore **debug**
+par défaut du template : installable pour un POC, **jamais** pour le Store. Le dossier natif
+`android/` est régénéré à chaque fois, puis gitignoré.
+
+> ⚠️ Dans les deux cas, sur un vrai téléphone `EXPO_PUBLIC_API_URL` doit pointer vers une API
+> **joignable depuis le réseau du téléphone** (IP LAN de la machine, ou API déployée) — jamais
+> `localhost`.
+
 **Node 22 requis** (`.nvmrc`) : les tests du SQL de la file s'appuient sur `node:sqlite`, absent
 en Node 20 — ils y sont silencieusement **sautés**. La CI est en Node 22.
 
