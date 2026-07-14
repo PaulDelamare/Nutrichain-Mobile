@@ -60,6 +60,42 @@ describe('findBatchByCode', () => {
     expect(findBatchByCode('b-1', lots)?.id).toBe('b-1');
   });
 
+  // Un vrai identifiant est un UUID de 36 caractères — au-delà de la limite d'un numéro de lot GS1,
+  // donc le décodeur ne le rend PAS. Seul le repli sur le code brut le résout. Avec une fixture
+  // courte (« b-1 »), on pouvait supprimer ce repli sans qu'un seul test rougisse.
+  it('résout un identifiant de lot RÉEL (un UUID)', () => {
+    const uuid = '3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
+    const avecUuid = [...lots, batch({ id: uuid, lot_number: '260712-QQQ111' })];
+
+    expect(findBatchByCode(uuid, avecUuid)?.id).toBe(uuid);
+  });
+
+  // L'étiquette qu'imprime NutriChain n'est PAS le numéro de lot : c'est une URL GS1 Digital Link.
+  // Sans décodage, scanner notre propre étiquette devant la cuve ou le camion répondait
+  // « Lot inconnu » — l'opérateur voyait sa propre marchandise refusée.
+  it('résout l’étiquette réellement imprimée par NutriChain (un lien GS1)', () => {
+    const etiquette = 'https://api.nutrichain.fr/gs1/01/3042040209123/10/260711-XYZ789';
+
+    expect(findBatchByCode(etiquette, lots)?.id).toBe('b-2');
+  });
+
+  it('résout une étiquette fournisseur (element string GS1)', () => {
+    expect(findBatchByCode('010304204020912310260711-XYZ789', lots)?.id).toBe('b-2');
+  });
+
+  // ⚠️ LE piège. Le décodeur réécrit tout code commençant par un identifiant GS1 : « 10ABC » y est
+  // lu « ABC ». Si l'interprétation passait avant le code brut, scanner le lot « 10ABC » engagerait
+  // le lot « ABC » — SANS erreur, sans toast. Mauvaise marchandise en production, mauvais parent
+  // dans la traçabilité. Un numéro de lot fournisseur peut parfaitement commencer par « 10 ».
+  it('engage le lot qu’on a scanné, pas celui que le décodage suggère', () => {
+    const pieges = [
+      batch({ id: 'piege-1', lot_number: '10ABC' }),
+      batch({ id: 'piege-2', lot_number: 'ABC' }),
+    ];
+
+    expect(findBatchByCode('10ABC', pieges)?.id).toBe('piege-1');
+  });
+
   it('ignore la casse et les espaces', () => {
     expect(findBatchByCode('  260711-abc123 ', lots)?.id).toBe('b-1');
   });

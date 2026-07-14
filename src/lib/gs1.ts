@@ -154,9 +154,24 @@ function parseElementString(code: string): ScannedCode | null {
         break;
       }
 
-      if (ai === '00') result.sscc = value;
-      if (ai === '01') result.gtin = normalizeGtin(value);
-      if (ai === '17') result.expiry = parseExpiry(value);
+      // Une valeur d'AI à longueur fixe qui ne SE PARSE PAS prouve que ce n'était pas un element
+      // string : `171231-ABC123` est un numéro de lot ordinaire, pas une DLC. Le prendre pour un
+      // AI 17 malformé rendait un résultat « décodé mais vide », qui court-circuitait le repli
+      // « code nu » — l'onglet Scan filait alors en réception au lieu de chercher le lot.
+      if (ai === '00') {
+        if (!/^\d{18}$/.test(value)) return null;
+        result.sscc = value;
+      }
+      if (ai === '01') {
+        const gtin = normalizeGtin(value);
+        if (!gtin) return null;
+        result.gtin = gtin;
+      }
+      if (ai === '17') {
+        const expiry = parseExpiry(value);
+        if (!expiry) return null;
+        result.expiry = expiry;
+      }
 
       decodedSomething = true;
       rest = rest.slice(2 + fixedLength);
