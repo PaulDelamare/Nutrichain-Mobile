@@ -6,6 +6,7 @@ import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
+  Linking,
   StyleSheet,
   Text,
   TextInput,
@@ -118,71 +119,58 @@ export default function ScanScreen() {
     );
   }
 
-  if (!permission.granted) {
-    return (
-      <View style={[styles.dark, { paddingTop: insets.top }]}>
-        <Header />
-        <View style={styles.center}>
-          <View style={styles.permissionIcon}>
-            <Ionicons name="camera-outline" size={48} color="rgba(255,255,255,0.5)" />
-          </View>
-          <Text style={styles.permissionTitle}>Accès à la caméra requis</Text>
-          <Text style={styles.permissionDesc}>
-            NutriChain a besoin de la caméra pour scanner les codes-barres et datamatrix.
-          </Text>
-          <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission} activeOpacity={0.85}>
-            <LinearGradient colors={BRAND_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={styles.permissionBtnGradient}>
-              <Text style={styles.permissionBtnText}>Autoriser l&apos;accès</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
-
   // ─── Main scan screen ────────────────────────────────────────
+  // La permission ne remplace QUE la zone caméra, jamais l'écran entier : la saisie manuelle vit
+  // en dessous et DOIT survivre à un refus. C'est le seul recours de l'opérateur quand la caméra
+  // manque — refusée ici, ou un code-barres abîmé/givré que l'objectif ne lit pas.
   return (
     <View style={[styles.dark, { paddingTop: insets.top }]}>
       <Header />
 
-      {/* Camera with overlay */}
-      <View style={styles.cameraContainer}>
-        <CameraView
-          style={StyleSheet.absoluteFill}
-          facing="back"
-          onBarcodeScanned={({ data }) => handleCode(data)}
-          barcodeScannerSettings={{ barcodeTypes: SCANNED_BARCODE_TYPES }}
-        />
+      {permission.granted ? (
+        <>
+          {/* Camera with overlay */}
+          <View style={styles.cameraContainer}>
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              facing="back"
+              onBarcodeScanned={({ data }) => handleCode(data)}
+              barcodeScannerSettings={{ barcodeTypes: SCANNED_BARCODE_TYPES }}
+            />
 
-        {/* Dark overlay — top */}
-        <View style={[styles.overlaySlice, { height: TOP_H, width: SCREEN_WIDTH }]} />
+            {/* Dark overlay — top */}
+            <View style={[styles.overlaySlice, { height: TOP_H, width: SCREEN_WIDTH }]} />
 
-        {/* Dark overlay — middle row */}
-        <View style={styles.overlayMiddleRow}>
-          <View style={[styles.overlaySlice, { width: SIDE_W, height: FRAME_H }]} />
+            {/* Dark overlay — middle row */}
+            <View style={styles.overlayMiddleRow}>
+              <View style={[styles.overlaySlice, { width: SIDE_W, height: FRAME_H }]} />
 
-          {/* Scan frame */}
-          <View style={styles.scanFrame}>
-            {/* Corner marks */}
-            <View style={[styles.corner, styles.tlCorner]} />
-            <View style={[styles.corner, styles.trCorner]} />
-            <View style={[styles.corner, styles.blCorner]} />
-            <View style={[styles.corner, styles.brCorner]} />
-            {/* Center horizontal guide */}
-            <View style={styles.centerLine} />
+              {/* Scan frame */}
+              <View style={styles.scanFrame}>
+                {/* Corner marks */}
+                <View style={[styles.corner, styles.tlCorner]} />
+                <View style={[styles.corner, styles.trCorner]} />
+                <View style={[styles.corner, styles.blCorner]} />
+                <View style={[styles.corner, styles.brCorner]} />
+                {/* Center horizontal guide */}
+                <View style={styles.centerLine} />
+              </View>
+
+              <View style={[styles.overlaySlice, { width: SIDE_W, height: FRAME_H }]} />
+            </View>
+
+            {/* Dark overlay — bottom */}
+            <View style={[styles.overlaySlice, { flex: 1, width: SCREEN_WIDTH }]} />
           </View>
 
-          <View style={[styles.overlaySlice, { width: SIDE_W, height: FRAME_H }]} />
-        </View>
-
-        {/* Dark overlay — bottom */}
-        <View style={[styles.overlaySlice, { flex: 1, width: SCREEN_WIDTH }]} />
-      </View>
-
-      {/* Instructions */}
-      <Text style={styles.instruction}>
-        Placez le code-barres ou le datamatrix dans le cadre — lecture quasi instantanée
-      </Text>
+          {/* Instructions */}
+          <Text style={styles.instruction}>
+            Placez le code-barres ou le datamatrix dans le cadre — lecture quasi instantanée
+          </Text>
+        </>
+      ) : (
+        <PermissionPrompt canAskAgain={permission.canAskAgain} onRequest={requestPermission} />
+      )}
 
       {/* Manual input */}
       <View style={styles.manualSection}>
@@ -230,6 +218,37 @@ export default function ScanScreen() {
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
+// Prend la place de la caméra (même hauteur), pas de l'écran — la saisie manuelle reste visible
+// dessous. `canAskAgain === false` = refus DÉFINITIF : rappeler requestPermission() se résoudrait
+// sans jamais rouvrir le dialogue système (bouton mort, l'opérateur tape dans le vide). Le seul
+// recours réel devient alors d'ouvrir les réglages de l'app — qu'on nomme explicitement.
+function PermissionPrompt({ canAskAgain, onRequest }: { canAskAgain: boolean; onRequest: () => void }) {
+  return (
+    <View style={styles.permissionArea}>
+      <View style={styles.permissionIcon}>
+        <Ionicons name="camera-outline" size={48} color="rgba(255,255,255,0.5)" />
+      </View>
+      <Text style={styles.permissionTitle}>Accès à la caméra requis</Text>
+      <Text style={styles.permissionDesc}>
+        {canAskAgain
+          ? 'NutriChain a besoin de la caméra pour scanner les codes-barres et datamatrix. La saisie manuelle ci-dessous reste disponible.'
+          : "L'accès à la caméra a été refusé. Activez-le dans les réglages, ou utilisez la saisie manuelle ci-dessous."}
+      </Text>
+      <TouchableOpacity
+        style={styles.permissionBtn}
+        onPress={canAskAgain ? onRequest : () => void Linking.openSettings()}
+        activeOpacity={0.85}
+      >
+        <LinearGradient colors={BRAND_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={styles.permissionBtnGradient}>
+          <Text style={styles.permissionBtnText}>
+            {canAskAgain ? "Autoriser l'accès" : 'Ouvrir les réglages'}
+          </Text>
+        </LinearGradient>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 function Header() {
   return (
     <View style={styles.header}>
@@ -422,6 +441,15 @@ const styles = StyleSheet.create({
   },
 
   /* ── Permission screen ───────────────────────────────────── */
+  // Bornée à la hauteur de la caméra : la saisie manuelle garde la place exacte qu'elle a
+  // caméra active, au lieu d'être repoussée hors de l'écran par un bloc qui s'étire.
+  permissionArea: {
+    height: CAMERA_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    gap: 16,
+  },
   permissionIcon: {
     width: 96,
     height: 96,
