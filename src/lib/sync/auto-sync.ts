@@ -1,5 +1,6 @@
 import * as Network from 'expo-network';
 
+import { loadServerTimeOffset, serverNow } from '../server-time';
 import { toastError } from '../toast';
 import { flagStalePending, purgeSyncedBefore } from './queue';
 import { syncPendingOperations } from './sync';
@@ -35,14 +36,27 @@ function trigger(): void {
  * l'état courant sans changement, et relancer à chaque notification martèlerait l'API.
  */
 export async function startAutoSync(): Promise<() => void> {
-  const cutoff = Date.now() - RETENTION_MS;
+  // L'écart appris la veille : sans lui, chaque lancement repartirait sans heure de référence.
+  await loadServerTimeOffset().catch(() => undefined);
 
-  // L'historique synchronisé n'a plus d'utilité, et la file ne doit pas grossir sans fin.
-  purgeSyncedBefore(cutoff).catch(() => undefined);
+  // ⚠️ Ces deux opérations CONDAMNENT et EFFACENT des scans sur la foi d'une date. Les dater sur
+  // l'horloge du téléphone était un piège : un appareil déchargé démarre en retard, se resynchronise
+  // ensuite — et au lancement suivant, des scans vieux de deux minutes basculaient en conflit avec
+  // le motif « en attente depuis plus de 7 jours », leur historique effacé au passage.
+  //
+  // Sans heure de référence, on ne fait RIEN. Un scan gardé un jour de trop est réparable ; un scan
+  // condamné à tort ne l'est pas.
+  const reference = serverNow();
+  if (reference.kind === 'ok') {
+    const cutoff = reference.now - RETENTION_MS;
 
-  // AVANT toute synchronisation : une opération dont la clé d'idempotence a expiré côté
-  // serveur ne peut plus être rejouée sans risque de doublon. On la signale, on ne parie pas.
-  await flagStalePending(cutoff, STALE_MESSAGE).catch(() => undefined);
+    // L'historique synchronisé n'a plus d'utilité, et la file ne doit pas grossir sans fin.
+    purgeSyncedBefore(cutoff).catch(() => undefined);
+
+    // AVANT toute synchronisation : une opération dont la clé d'idempotence a expiré côté
+    // serveur ne peut plus être rejouée sans risque de doublon. On la signale, on ne parie pas.
+    await flagStalePending(cutoff, STALE_MESSAGE).catch(() => undefined);
+  }
 
   const state = await Network.getNetworkStateAsync();
   online = state.isInternetReachable === true;
