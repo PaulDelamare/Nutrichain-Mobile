@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { useOnlineStatus, type OnlineStatus } from '@/hooks/use-online-status';
 import { loadActiveColdAlerts, type ColdAlerts } from '@/lib/alerts';
+import { loadQuarantineBatches, type QuarantineBatches } from '@/lib/quarantine';
 import { formatRole } from '@/lib/roles';
 import { countByStatus } from '@/lib/sync/queue';
 import type { OperationStatus } from '@/lib/sync/types';
@@ -85,6 +86,7 @@ export default function HomeScreen() {
   // « ALERTES FROID : 0 » et « Tout est à jour » avant même d'avoir rien demandé.
   const [counts, setCounts] = useState<QueueCounts | null>(null);
   const [cold, setCold] = useState<ColdAlerts | null>(null);
+  const [quarantine, setQuarantine] = useState<QuarantineBatches | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -94,8 +96,10 @@ export default function HomeScreen() {
         .then((value) => setCounts({ kind: 'ok', counts: value }))
         .catch(() => setCounts({ kind: 'unverifiable' }));
 
-      // `loadActiveColdAlerts` ne rejette jamais : l'incertitude est dans sa valeur de retour.
+      // `loadActiveColdAlerts` / `loadQuarantineBatches` ne rejettent jamais : l'incertitude est
+      // dans leur valeur de retour (`unverifiable`), jamais un zéro ou une liste vide muette.
       loadActiveColdAlerts().then(setCold);
+      loadQuarantineBatches().then(setQuarantine);
     }, [])
   );
 
@@ -107,6 +111,15 @@ export default function HomeScreen() {
     counts === null ? LOADING : counts.kind === 'unverifiable' ? UNKNOWN : (value ?? UNKNOWN);
 
   const queue = counts?.kind === 'ok' ? counts.counts : null;
+
+  // Compteur de quarantaine — même discipline « trois états » : … / — / N, jamais un 0 par défaut.
+  const quarantineBadge =
+    quarantine === null
+      ? LOADING
+      : quarantine.kind === 'unverifiable'
+        ? UNKNOWN
+        : String(quarantine.batches.length);
+  const quarantineActive = quarantine?.kind === 'ok' && quarantine.batches.length > 0;
 
   return (
     <View style={styles.screen}>
@@ -229,6 +242,28 @@ export default function HomeScreen() {
             onPress={() => router.navigate('/sync')}
           />
         </View>
+
+        {/* Lots en quarantaine — TOUJOURS présent : l'écran doit rester atteignable même à 0, et le
+            compteur reste honnête (… en chargement, — si non vérifié, sinon le nombre). Avant, ces
+            lots bloqués par un contrôle qualité étaient invisibles : personne sur le terrain ne
+            savait qu'ils existaient. */}
+        <TouchableOpacity
+          style={[styles.quarantineCard, quarantineActive && styles.quarantineCardActive]}
+          onPress={() => router.navigate('/quarantine')}
+          activeOpacity={0.8}
+        >
+          <View style={[styles.quarantineIcon, quarantineActive && styles.quarantineIconActive]}>
+            <Ionicons name="lock-closed" size={18} color={quarantineActive ? '#B45309' : '#6B7280'} />
+          </View>
+          <View style={styles.quarantineTextWrap}>
+            <Text style={styles.quarantineTitle}>Lots en quarantaine</Text>
+            <Text style={styles.quarantineSub}>Marchandise bloquée — à ne pas utiliser</Text>
+          </View>
+          <Text style={[styles.quarantineBadge, quarantineActive && styles.quarantineBadgeActive]}>
+            {quarantineBadge}
+          </Text>
+          <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+        </TouchableOpacity>
 
         {/* Ne PAS taire l'incertitude : une bannière absente se lit « aucune alerte ».
             Mais seulement sur un ÉCHEC — pas pendant le chargement, sinon l'opérateur verrait
@@ -440,6 +475,41 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6B7280',
   },
+
+  /* ── Quarantaine card ────────────────────────────────────── */
+  quarantineCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  // Des lots réellement bloqués : la carte prend une teinte ambrée pour attirer l'œil.
+  quarantineCardActive: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  quarantineIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quarantineIconActive: { backgroundColor: '#FEF3C7' },
+  quarantineTextWrap: { flex: 1 },
+  quarantineTitle: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  quarantineSub: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  quarantineBadge: { fontSize: 20, fontWeight: '700', color: '#6B7280' },
+  quarantineBadgeActive: { color: '#B45309' },
 
   /* ── Cold chain alert banner ─────────────────────────────── */
   alertBanner: {
