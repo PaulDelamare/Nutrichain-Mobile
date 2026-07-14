@@ -1,5 +1,6 @@
 import { apiClient } from './api';
 import { readCache, writeCache } from './cache';
+import { ApiError } from './errors';
 
 // ── Le catalogue des lots : ce qu'on scanne devant la cuve ou le camion ───────────────────────
 
@@ -119,6 +120,21 @@ export interface BatchDetail {
   dateCreation: string | null;
 }
 
+function toBatchDetail(b: BatchApi): BatchDetail {
+  const quantite = Number(b.quantite_actuelle);
+  return {
+    id: b.id,
+    lotNumber: b.lot_number,
+    statut: b.statut,
+    produitNom: b.produit?.nom ?? 'Produit inconnu',
+    codeGtin: b.produit?.code_gtin ?? null,
+    quantite: Number.isFinite(quantite) ? quantite : 0,
+    uniteCode: b.unite_code,
+    datePeremption: b.date_peremption,
+    dateCreation: b.date_creation,
+  };
+}
+
 /**
  * Fiche d'un lot (`GET /api/logistics/batches/:id`, include produit+unité).
  * Renvoie `null` si introuvable / hors réseau — l'écran affiche un état vide.
@@ -126,20 +142,33 @@ export interface BatchDetail {
 export async function loadBatch(id: string): Promise<BatchDetail | null> {
   try {
     const { data } = await apiClient.get<{ data: BatchApi }>(`/api/logistics/batches/${id}`);
-    const b = data.data;
-    const quantite = Number(b.quantite_actuelle);
-    return {
-      id: b.id,
-      lotNumber: b.lot_number,
-      statut: b.statut,
-      produitNom: b.produit?.nom ?? 'Produit inconnu',
-      codeGtin: b.produit?.code_gtin ?? null,
-      quantite: Number.isFinite(quantite) ? quantite : 0,
-      uniteCode: b.unite_code,
-      datePeremption: b.date_peremption,
-      dateCreation: b.date_creation,
-    };
+    return toBatchDetail(data.data);
   } catch {
     return null;
+  }
+}
+
+/**
+ * Le lot qu'on vient de scanner, résolu par le SERVEUR (`GET /api/logistics/batches/resolve`).
+ *
+ * Volontairement PAS résolu localement contre `loadBatches()` : le catalogue est plafonné à 100
+ * lots côté serveur, donc au-delà un lot bien réel serait déclaré « inconnu » — et l'opérateur
+ * réceptionnerait une seconde fois une palette déjà en stock.
+ *
+ * ⚠️ `null` signifie « ce lot n'existe pas » (404), et RIEN D'AUTRE. Avaler une panne réseau dans
+ * le même `null` recréerait exactement ce doublon : deux secondes sans réseau, et un lot en stock
+ * repartirait en réception. Toute autre erreur est donc relancée à l'appelant, qui doit le DIRE.
+ */
+export async function resolveBatch(lotNumber: string): Promise<BatchDetail | null> {
+  try {
+    const { data } = await apiClient.get<{ data: BatchApi }>('/api/logistics/batches/resolve', {
+      params: { lot_number: lotNumber },
+    });
+    return toBatchDetail(data.data);
+  } catch (error: unknown) {
+    if (error instanceof ApiError && error.status === 404) {
+      return null;
+    }
+    throw error;
   }
 }
