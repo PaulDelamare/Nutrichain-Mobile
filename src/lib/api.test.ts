@@ -3,11 +3,13 @@ import { router } from 'expo-router';
 
 import { apiClient, isAuthenticated, signIn, signOut } from './api';
 import { clearCache } from './cache';
+import { rememberServerTime } from './server-time';
 import { ApiError, getErrorMessage } from './errors';
 import { clearToken, clearUserId, getToken, getUserId, saveToken, saveUserId } from './session';
 
 jest.mock('./session');
 jest.mock('./cache');
+jest.mock('./server-time');
 jest.mock('expo-router', () => ({ router: { replace: jest.fn() } }));
 
 const session = jest.mocked({
@@ -369,5 +371,49 @@ describe('isAuthenticated', () => {
     await isAuthenticated();
 
     expect(() => request.lastConfig()).toThrow(/Aucune requête/);
+  });
+});
+
+describe('horloge du serveur', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    session.getToken.mockResolvedValue(null);
+    session.getUserId.mockResolvedValue(null);
+  });
+
+  // ⚠️ L'en-tête `Date` n'est PAS dans la liste blanche CORS : dans un navigateur, JavaScript ne le
+  // voit pas (seuls `content-type` et `content-length` sont exposés par défaut). Sans cette
+  // seconde source, l'application web n'apprendrait JAMAIS l'heure du serveur — et refuserait tout
+  // lot portant une DLC, faute de pouvoir en juger. La démo se fait dans un navigateur.
+  it('apprend l’heure depuis le CORPS de /api/health quand l’en-tête est invisible (web)', async () => {
+    const heureServeur = '2026-07-14T16:27:24.628Z';
+    respondWith(200, { data: { timestamp: heureServeur, uptimeSeconds: 12 } });
+
+    await apiClient.get('/api/health');
+
+    expect(rememberServerTime).toHaveBeenCalledWith(heureServeur);
+  });
+
+  it('préfère l’en-tête `Date` quand il est lisible (mobile natif)', async () => {
+    const adapter: AxiosAdapter = async (config) => ({
+      data: { data: { timestamp: '2020-01-01T00:00:00.000Z' } },
+      status: 200,
+      statusText: '',
+      headers: { date: 'Tue, 14 Jul 2026 16:27:24 GMT' },
+      config,
+    });
+    apiClient.defaults.adapter = adapter;
+
+    await apiClient.get('/api/health');
+
+    expect(rememberServerTime).toHaveBeenCalledWith('Tue, 14 Jul 2026 16:27:24 GMT');
+  });
+
+  it('n’invente rien sur une réponse ordinaire sans en-tête `Date`', async () => {
+    respondWith(200, { data: [{ id: 'lot-1' }] });
+
+    await apiClient.get('/api/traceability/batches');
+
+    expect(rememberServerTime).toHaveBeenCalledWith(undefined);
   });
 });

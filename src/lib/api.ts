@@ -44,11 +44,30 @@ apiClient.interceptors.request.use(async (config) => {
   return config;
 });
 
+/** Le `timestamp` que `/api/health` porte dans son corps — la seule heure serveur lisible sur le web. */
+function healthTimestamp(data: unknown): string | undefined {
+  if (data === null || typeof data !== 'object') return undefined;
+  const payload = (data as { data?: unknown }).data;
+  if (payload === null || typeof payload !== 'object') return undefined;
+  const timestamp = (payload as { timestamp?: unknown }).timestamp;
+  return typeof timestamp === 'string' ? timestamp : undefined;
+}
+
 apiClient.interceptors.response.use(
   (response) => {
-    // Chaque réponse date le serveur. On l'apprend au passage : c'est la seule horloge que
-    // l'appareil ne peut pas fausser, et c'est elle qui tranche les péremptions.
-    void rememberServerTime(response.headers?.date);
+    // L'heure du serveur — la seule que l'appareil ne peut pas fausser, et celle qui tranche les
+    // péremptions. On la prend où on peut, dans cet ordre :
+    //
+    // 1. L'en-tête `Date`, présent sur TOUTE réponse. ⚠️ Mais il n'est PAS dans la liste blanche
+    //    CORS : dans un navigateur, JavaScript ne le voit pas (seuls `content-type` et
+    //    `content-length` sont exposés par défaut). Il ne sert donc que sur mobile natif.
+    // 2. Le corps de `/api/health`, qui porte un `timestamp` — lisible partout, CORS compris.
+    //    C'est LA source sur le web, et la sonde d'état réseau appelle déjà cette route au
+    //    démarrage puis à chaque changement de réseau.
+    //
+    // Sans le point 2, l'application web n'apprendrait jamais l'heure : elle refuserait alors tout
+    // lot portant une DLC, faute de pouvoir en juger. Et la démo se fait dans un navigateur.
+    void rememberServerTime(response.headers?.date ?? healthTimestamp(response.data));
     return response;
   },
   async (error: AxiosError) => {
