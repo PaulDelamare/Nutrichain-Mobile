@@ -66,17 +66,27 @@ export default function SyncScreen() {
   const [busy, setBusy] = useState<string[]>([]);
 
   const [foreign, setForeign] = useState(0);
+  /** La file n'a pas pu être lue : son contenu est INCONNU — ce n'est pas « elle est vide ». */
+  const [unreadable, setUnreadable] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [nextCounts, list, nextForeign] = await Promise.all([
-      countByStatus(),
-      listOperations(),
-      countForeignPending(),
-    ]);
-    setCounts(nextCounts);
-    setOperations(list);
-    setForeign(nextForeign);
-    setNow(Date.now());
+    try {
+      const [nextCounts, list, nextForeign] = await Promise.all([
+        countByStatus(),
+        listOperations(),
+        countForeignPending(),
+      ]);
+      setCounts(nextCounts);
+      setOperations(list);
+      setForeign(nextForeign);
+      setNow(Date.now());
+      setUnreadable(false);
+    } catch (error: unknown) {
+      setUnreadable(true);
+      // Sans ce `catch`, une base illisible laissait l'écran sur sa liste VIDE — donc sur
+      // « Aucune opération en file. Tout est synchronisé. » Le pire message possible.
+      toastError('Impossible de lire la file', error);
+    }
   }, []);
 
   useFocusEffect(
@@ -166,6 +176,13 @@ export default function SyncScreen() {
         text2:
           summary.retried > 0 ? `${summary.retried} en attente de nouvelle tentative.` : undefined,
       });
+    } catch (error: unknown) {
+      // ⚠️ Il n'y avait AUCUN `catch` ici. Tout ce que la synchro peut jeter — base illisible,
+      // verdict serveur inconnu (`outcome.ts` jette volontairement) — donnait un spinner qui
+      // tourne, s'arrête, et RIEN. La file restait « en attente », et l'opérateur repartait en
+      // croyant que ça finirait par passer. Le jour où l'API ajoute un verdict, le mobile cesse
+      // de synchroniser pour toujours, sans un mot.
+      toastError('Synchronisation impossible', error);
     } finally {
       setSyncing(false);
       await refresh();
@@ -224,7 +241,16 @@ export default function SyncScreen() {
           </>
         }
         ListEmptyComponent={
-          <Text style={styles.empty}>Aucune opération en file. Tout est synchronisé.</Text>
+          // ⚠️ Une liste vide ne veut pas dire « tout va bien » : elle peut aussi vouloir dire
+          // « je n'ai pas pu lire la base ». Les deux ne doivent pas porter le même message.
+          unreadable ? (
+            <Text style={styles.emptyError}>
+              Impossible de lire la file — son contenu est inconnu.{'\n'}Ne considérez rien comme
+              synchronisé.
+            </Text>
+          ) : (
+            <Text style={styles.empty}>Aucune opération en file. Tout est synchronisé.</Text>
+          )
         }
         renderItem={({ item }) => {
           const style = STATUS_STYLE[item.status];
@@ -236,7 +262,9 @@ export default function SyncScreen() {
             <View style={styles.row}>
               <View style={styles.rowHeader}>
                 <View style={styles.rowMain}>
-                  <Text style={styles.rowTitle}>Réception · {item.payload.shipment_id}</Text>
+                  <Text style={styles.rowTitle}>
+                    {item.payload ? `Réception · ${item.payload.shipment_id}` : 'Scan illisible'}
+                  </Text>
                   <Text style={styles.rowSubtitle}>
                     ObjectEvent{age ? ` · ${age}` : ''}
                     {item.attempts > 0 ? ` · ${item.attempts} tentative(s)` : ''}
@@ -257,7 +285,9 @@ export default function SyncScreen() {
                       d'audit au nom de celui qui appuie. Proposer le bouton serait promettre une
                       action que la file refuse — et laisser croire qu'on peut signer pour un
                       autre. Il reste supprimable, une fois lu. */}
-                  {!item.orphan && (
+                  {/* Un scan illisible ne se renvoie pas non plus : on ne sait plus ce qu'il
+                      contenait. Le bouton promettrait une action impossible. */}
+                  {!item.orphan && !item.corrupted && (
                     <TouchableOpacity
                       style={[styles.action, isBusy && styles.actionDisabled]}
                       onPress={() => confirmRequeue(item)}
@@ -367,6 +397,13 @@ const styles = StyleSheet.create({
   },
   list: { paddingTop: 4, paddingBottom: 20 },
   empty: { textAlign: 'center', color: '#9CA3AF', marginTop: 24 },
+  emptyError: {
+    textAlign: 'center',
+    color: '#B45309',
+    fontWeight: '600',
+    lineHeight: 20,
+    marginTop: 24,
+  },
   foreign: {
     backgroundColor: '#FEF3C7',
     color: '#92400E',

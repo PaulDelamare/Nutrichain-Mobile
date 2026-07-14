@@ -92,6 +92,73 @@ function markAs(clientOpId: string, status: OperationStatus, createdAt = NOW) {
     .run(status, createdAt, clientOpId);
 }
 
+/** Rend le payload d'une ligne illisible, comme le ferait une écriture partielle ou un disque plein. */
+function corrupt(clientOpId: string) {
+  engine
+    .prepare('UPDATE operations SET payload = ? WHERE client_op_id = ?')
+    .run('{"shipment_id": "SHIP-0', clientOpId);
+}
+
+describeWithSqlite('une ligne illisible ne doit pas emporter la file entière', () => {
+  beforeEach(() => {
+    engine = new DatabaseSync(':memory:');
+    engine.exec(SCHEMA);
+    mockUserId = 'operateur-A';
+  });
+
+  it('n’empêche PAS de lire les autres opérations', async () => {
+    // `JSON.parse` était appelé à nu : une seule ligne corrompue faisait jeter `listOperations`,
+    // l'écran restait sur sa liste vide — donc sur « Tout est synchronisé » — pendant que l'accueil
+    // annonçait « en attente ». Deux écrans qui se contredisent.
+    const cassee = await enqueueReceipt(PAYLOAD);
+    const saine = await enqueueReceipt(PAYLOAD);
+    corrupt(cassee);
+
+    const operations = await listOperations();
+
+    expect(operations).toHaveLength(2);
+    expect(operations.find((op) => op.clientOpId === saine)?.payload).toEqual(PAYLOAD);
+  });
+
+  it('devient une opération BLOQUÉE, visible et supprimable — jamais une exception', async () => {
+    const cassee = await enqueueReceipt(PAYLOAD);
+    corrupt(cassee);
+
+    const [operation] = await listOperations();
+
+    expect(operation).toMatchObject({ clientOpId: cassee, status: 'CONFLICT', corrupted: true });
+    expect(operation!.payload).toBeNull();
+    expect(operation!.error).toContain('illisible');
+
+    // Et elle est bien supprimable : sans ça, elle resterait en base pour toujours.
+    await expect(deleteOperation(cassee)).resolves.toBeUndefined();
+    expect(await listOperations()).toHaveLength(0);
+  });
+
+  it('n’est JAMAIS envoyée : on ne sait plus ce qu’elle contenait', async () => {
+    const cassee = await enqueueReceipt(PAYLOAD);
+    const saine = await enqueueReceipt(PAYLOAD);
+    corrupt(cassee);
+
+    const pending = await getPendingOperations(NOW, 50);
+
+    expect(pending.map((op) => op.clientOpId)).toEqual([saine]);
+  });
+
+  it('est comptée BLOQUÉE, pas « en attente » : les deux écrans doivent dire la même chose', async () => {
+    // `countByStatus` ne parse rien : sans persistance du blocage, l'accueil aurait continué
+    // d'annoncer « 1 en attente » pendant que l'écran de synchro la montrait bloquée.
+    const cassee = await enqueueReceipt(PAYLOAD);
+    corrupt(cassee);
+
+    await listOperations();
+
+    const counts = await countByStatus();
+    expect(counts.PENDING).toBe(0);
+    expect(counts.CONFLICT).toBe(1);
+  });
+});
+
 describeWithSqlite('file d’opérations (moteur SQLite réel)', () => {
   beforeEach(() => {
     engine = new DatabaseSync(':memory:');

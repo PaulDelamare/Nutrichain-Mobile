@@ -4,7 +4,7 @@ import { apiClient } from '../api';
 import { getToken, getUserId } from '../session';
 import { getPendingOperations, saveOperationUpdates } from './queue';
 import { MAX_BATCH_SIZE, syncPendingOperations } from './sync';
-import type { QueuedOperation } from './types';
+import type { SendableOperation } from './types';
 
 jest.mock('./queue');
 jest.mock('../cache');
@@ -22,7 +22,7 @@ const queue = jest.mocked({ getPendingOperations, saveOperationUpdates });
 const mockedGetUserId = jest.mocked(getUserId);
 const mockedGetToken = jest.mocked(getToken);
 
-function operation(clientOpId: string, attempts = 0): QueuedOperation {
+function operation(clientOpId: string, attempts = 0): SendableOperation {
   return {
     clientOpId,
     type: 'receipt',
