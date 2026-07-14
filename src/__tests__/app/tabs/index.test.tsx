@@ -1,8 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react-native';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react-native';
+import { router } from 'expo-router';
 
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { loadActiveColdAlerts } from '@/lib/alerts';
+import { loadQuarantineBatches } from '@/lib/quarantine';
 import { countByStatus } from '@/lib/sync/queue';
 
 import HomeScreen from '@/app/(tabs)/index';
@@ -10,6 +12,7 @@ import HomeScreen from '@/app/(tabs)/index';
 jest.mock('@/hooks/use-current-user');
 jest.mock('@/hooks/use-online-status');
 jest.mock('@/lib/alerts');
+jest.mock('@/lib/quarantine');
 jest.mock('@/lib/sync/queue');
 jest.mock('expo-router', () => ({
   router: { navigate: jest.fn() },
@@ -17,14 +20,26 @@ jest.mock('expo-router', () => ({
 }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
 
+const mockedRouter = jest.mocked(router);
 const mockedUser = jest.mocked(useCurrentUser);
 const mockedOnline = jest.mocked(useOnlineStatus);
 const mockedAlerts = jest.mocked(loadActiveColdAlerts);
+const mockedQuarantine = jest.mocked(loadQuarantineBatches);
 const mockedCounts = jest.mocked(countByStatus);
 
 function counts(overrides: Partial<Record<'PENDING' | 'SYNCED' | 'CONFLICT' | 'REJECTED', number>> = {}) {
   mockedCounts.mockResolvedValue({ PENDING: 0, SYNCED: 0, CONFLICT: 0, REJECTED: 0, ...overrides });
 }
+
+const quarantineBatch = (id: string) => ({
+  id,
+  lotNumber: `LOT-${id}`,
+  produitNom: 'Lait cru',
+  quantite: 1,
+  uniteCode: 'kg',
+  datePeremption: null,
+  dateCreation: '2026-07-01T08:00:00.000Z',
+});
 
 describe('écran d’accueil', () => {
   beforeEach(() => {
@@ -32,6 +47,7 @@ describe('écran d’accueil', () => {
     mockedUser.mockReturnValue({ user: null, loading: false });
     mockedOnline.mockReturnValue('online');
     mockedAlerts.mockResolvedValue({ kind: 'ok', alerts: [] });
+    mockedQuarantine.mockResolvedValue({ kind: 'ok', batches: [] });
     counts();
   });
 
@@ -129,6 +145,7 @@ describe('écran d’accueil', () => {
     // demandé. Un compteur non chargé n'est pas un compteur à zéro.
     mockedCounts.mockReturnValue(new Promise(() => undefined));
     mockedAlerts.mockReturnValue(new Promise(() => undefined));
+    mockedQuarantine.mockReturnValue(new Promise(() => undefined));
 
     render(<HomeScreen />);
 
@@ -148,5 +165,33 @@ describe('écran d’accueil', () => {
     await waitFor(() => expect(screen.getByText('ALERTES FROID')).toBeTruthy());
     expect(screen.queryByText(/Alertes froid non vérifiées/)).toBeNull();
     expect(screen.queryByText('File non vérifiée')).toBeNull();
+  });
+
+  // (issue #32) Les lots bloqués par un contrôle qualité étaient invisibles : personne sur le
+  // terrain ne savait qu'ils existaient. L'accueil les surface et mène à leur écran.
+  it('surface les lots en quarantaine et mène à leur écran', async () => {
+    mockedQuarantine.mockResolvedValue({
+      kind: 'ok',
+      batches: [quarantineBatch('1'), quarantineBatch('2'), quarantineBatch('3')],
+    });
+
+    render(<HomeScreen />);
+
+    await waitFor(() => expect(screen.getByText('Lots en quarantaine')).toBeTruthy());
+    expect(screen.getByText('3')).toBeTruthy();
+
+    fireEvent.press(screen.getByText('Lots en quarantaine'));
+    expect(mockedRouter.navigate).toHaveBeenCalledWith('/quarantine');
+  });
+
+  // ⚠️ Même règle que les alertes froid : sur une panne réseau, PAS de « 0 » rassurant sous la
+  // quarantaine — on avoue « — ». Un opérateur ne doit jamais croire « rien de bloqué » à tort.
+  it('n’affiche pas « 0 » lot en quarantaine quand il n’a pas pu vérifier', async () => {
+    mockedQuarantine.mockResolvedValue({ kind: 'unverifiable', error: new Error('offline') });
+
+    render(<HomeScreen />);
+
+    await waitFor(() => expect(screen.getByText('Lots en quarantaine')).toBeTruthy());
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
   });
 });
