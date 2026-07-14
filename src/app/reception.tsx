@@ -27,6 +27,7 @@ import {
   type Equipment,
 } from '@/lib/equipment';
 import { LOT_NUMBER_MAX_LENGTH, normalizeGtin, parseScannedCode } from '@/lib/gs1';
+import { clearReceiptDraft, loadReceiptDraft, saveReceiptDraft } from '@/lib/draft';
 import { enqueueReceipt } from '@/lib/sync/queue';
 import { SHIPMENT_ID_MAX_LENGTH, buildReceipt } from '@/lib/sync/receipt';
 import { syncPendingOperations } from '@/lib/sync/sync';
@@ -80,11 +81,15 @@ export default function ReceptionScreen() {
   const [quantity, setQuantity] = useState('');
   const [unit, setUnit] = useState('');
   const [status, setStatus] = useState<ReceiptPayload['statut_controle']>('OK');
-  const [location, setLocation] = useState<Equipment | null>(null);
+  // L'emplacement SCANNÉ. L'emplacement effectif est dérivé plus bas (scan > brouillon).
+  const [scannedLocation, setScannedLocation] = useState<Equipment | null>(null);
   const [scanningLocation, setScanningLocation] = useState(false);
   const [saving, setSaving] = useState(false);
   // Le statut choisi met-il le lot en quarantaine ? Décide de l'avertissement et de la confirmation.
   const [confirmingQuarantine, setConfirmingQuarantine] = useState(false);
+  // L'emplacement restauré depuis le brouillon : un identifiant, tant que le catalogue des
+  // matériels n'est pas chargé et qu'on ne peut pas le retrouver.
+  const [restoredLocationId, setRestoredLocationId] = useState<string | null>(null);
   const isQuarantineStatus = QUARANTINE_STATUSES.has(status);
 
   // Les unités viennent des produits, jamais d'une liste codée en dur : elles sont des
@@ -127,6 +132,43 @@ export default function ReceptionScreen() {
       .catch(() => setEquipment([]));
   }, []);
 
+  // ⚠️ Restauration du brouillon. Une session qui expire pendant la saisie — un simple
+  // rafraîchissement de fond qui prend un 401 — renvoie l'opérateur à l'écran de connexion et
+  // DÉTRUIT tout ce qu'il a tapé sur le quai. Il retrouve maintenant sa saisie en revenant.
+  //
+  // Un code fraîchement scanné a la priorité : il exprime une intention NOUVELLE, alors que le
+  // brouillon est un souvenir. Le contraire ferait rouvrir une vieille saisie par-dessus le lot que
+  // l'opérateur vient de scanner.
+  useEffect(() => {
+    if (code) return;
+
+    let alive = true;
+    loadReceiptDraft()
+      .then((draft) => {
+        if (!alive || !draft) return;
+        setSupplierId(draft.supplierId);
+        setProductId(draft.productId);
+        setShipmentId(draft.shipmentId);
+        setLotNumber(draft.lotNumber);
+        setQuantity(draft.quantity);
+        setUnit(draft.unit);
+        setStatus(draft.status as ReceiptPayload['statut_controle']);
+        setRestoredLocationId(draft.locationId);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      alive = false;
+    };
+  }, [code]);
+
+  // L'emplacement est un OBJET du catalogue : le brouillon n'en garde que l'identifiant, et on ne
+  // peut le rétablir qu'une fois les matériels chargés. On le DÉRIVE plutôt que de le recopier dans
+  // un état — un effet qui synchronise deux états dit la même chose deux fois, et finit par se
+  // contredire. Un scan reste prioritaire : c'est une intention nouvelle, le brouillon un souvenir.
+  const location =
+    scannedLocation ?? equipment.find((item) => item.id === restoredLocationId) ?? null;
+
   const handleLocationScan = (scannedCode: string) => {
     const found = findEquipmentByCode(scannedCode, equipment);
     setScanningLocation(false);
@@ -150,7 +192,7 @@ export default function ReceptionScreen() {
       return;
     }
 
-    setLocation(found);
+    setScannedLocation(found);
   };
 
   const receipt = buildReceipt({
@@ -165,6 +207,26 @@ export default function ReceptionScreen() {
     expiry: decodedExpiry ?? undefined,
   });
 
+  // Le brouillon suit la saisie. On l'écrit à chaque changement — c'est une écriture SQLite locale,
+  // pas un appel réseau — mais jamais un formulaire VIDE : ça effacerait le brouillon qu'on vient
+  // tout juste de restaurer, au premier rendu.
+  useEffect(() => {
+    const vide =
+      !supplierId && !productId && !shipmentId && !lotNumber && !quantity && !location;
+    if (vide) return;
+
+    void saveReceiptDraft({
+      supplierId,
+      productId,
+      shipmentId,
+      lotNumber,
+      quantity,
+      unit,
+      status,
+      locationId: location?.id ?? null,
+    }).catch(() => undefined);
+  }, [supplierId, productId, shipmentId, lotNumber, quantity, unit, status, location]);
+
   // Écrit réellement la réception dans la file locale (chemin nominal, ou après confirmation de
   // quarantaine). Ferme la confirmation d'abord : elle a joué son rôle.
   const persistReceipt = async () => {
@@ -175,6 +237,10 @@ export default function ReceptionScreen() {
     try {
       // Enregistrée localement d'abord : un scan ne doit jamais dépendre du réseau.
       await enqueueReceipt(receipt);
+
+      // La saisie est en file : le brouillon a fait son office. Le garder le ferait resurgir
+      // par-dessus la réception suivante.
+      await clearReceiptDraft().catch(() => undefined);
 
       Toast.show({
         type: 'success',

@@ -37,6 +37,21 @@ export const SCHEMA = `
     value     TEXT NOT NULL,
     cached_at INTEGER NOT NULL DEFAULT 0
   );
+  -- Une saisie EN COURS, pas encore mise en file.
+  --
+  -- Table à part, et non une clé du cache : le cache est purgé à chaque connexion (il contient le
+  -- catalogue d'une organisation, qu'on ne doit jamais montrer à l'opérateur suivant). Or un
+  -- brouillon appartient à l'OPÉRATEUR — c'est son travail — et il doit survivre précisément à ce
+  -- moment-là : une session qui expire pendant la saisie le renvoie à l'écran de connexion.
+  --
+  -- La clé est user_id : le brouillon d'un opérateur ne se rouvre jamais chez un autre.
+  CREATE TABLE IF NOT EXISTS drafts (
+    user_id    TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, kind)
+  );
 `;
 
 /**
