@@ -228,6 +228,13 @@ npm run lint
 Ces trois commandes, **plus un build**, tournent en CI sur chaque PR
 (`.github/workflows/ci.yml`, 4 jobs, Node 22).
 
+**La couverture n'est pas décorative** : sans `collectCoverageFrom`, Jest n'instrumente que les
+fichiers qu'un test importe — les fichiers sans test sont alors *absents* du rapport au lieu d'y
+compter 0 %, et le pourcentage flatte. La configuration instrumente donc **tout le dossier `src/`**, et un
+`coverageThreshold` global à **70 %** (livrable 3) fait **échouer le job** en dessous : le rapport
+n'est plus produit puis oublié. Le seuil ne s'applique qu'avec `--coverage`, jamais au `npm test`
+local. À ce jour : ~88 % de statements sur les 51 fichiers source.
+
 **Le build n'est pas décoratif** : les tests unitaires prouvent que le code fait ce qu'on croit,
 ils ne prouvent pas que l'application *démarre*. C'est le build qui a trouvé le bug ci-dessus.
 
