@@ -3,8 +3,10 @@
 Application terrain des opérateurs NutriChain (Expo / React Native).
 
 Un opérateur scanne et saisit une réception **dans une chambre froide, un entrepôt métallique,
-une zone sans réseau**. L'application est donc conçue pour fonctionner **hors ligne d'abord** :
-rien de ce qu'elle enregistre ne dépend du réseau au moment de la saisie.
+une zone sans réseau**. L'application est donc **hors ligne d'abord là où ça compte** : la
+**réception** — le geste du quai — ne dépend jamais du réseau au moment de la saisie. La
+transformation et l'expédition, elles, se font au bureau, connecté : c'est un choix de périmètre,
+pas un manque (voir [Le périmètre du hors-ligne](#le-périmètre-du-hors-ligne--ce-qui-est-couvert-et-ce-qui-ne-lest-pas)).
 
 **Le mobile PRODUIT la traçabilité** (scans, réceptions, emplacements) et en **consulte** ce dont
 l'opérateur a besoin devant le camion : fiche d'un lot, **généalogie** du lot, lots en quarantaine,
@@ -141,6 +143,39 @@ Le renvoi crée une opération **neuve** (nouvel identifiant). C'est la seule ex
 « un scan = un identifiant immuable », et elle est sûre : côté serveur, un `conflict` comme un
 `error` tournent dans une transaction qui *rollback* — rien n'a été enregistré sous cette clé.
 La rejouer telle quelle reconflicterait indéfiniment.
+
+### Le périmètre du hors-ligne : ce qui est couvert, et ce qui ne l'est pas
+
+**Le hors-ligne couvre la réception. Pas la transformation, pas l'expédition.** C'est délibéré, et
+ça se dit mieux que ça ne se cache.
+
+| Écriture | Hors ligne ? | Pourquoi |
+| -------- | ------------ | -------- |
+| **Réception** | ✅ file SQLite | Le geste du **quai** : chambre froide, entrepôt métallique, zone sans réseau. C'est là que le hors-ligne est vital — et c'est le seul flux que le endpoint de sync accepte. |
+| Transformation | ❌ en ligne | Limite **technique**, pas métier : voir « Pourquoi ne pas étendre la file ? » ci-dessous. |
+| Expédition | ❌ en ligne | Idem — et sans idempotence serveur, un rejeu y serait dangereux. |
+| Levée de quarantaine, résolution d'alerte, rappel | ❌ en ligne | Décisions qualité : elles supposent de toute façon des données fraîches (statut du lot, alerte en cours). |
+
+Ce n'est pas caché à l'opérateur : hors réseau, ces écrans affichent un bandeau explicite
+(« Hors réseau : une expédition ne peut pas être enregistrée pour plus tard ») et **désactivent**
+le bouton d'envoi. Aucune saisie n'est acceptée pour être perdue plus tard.
+
+⚠️ **Ce projet ne revendique donc PAS « tout fonctionne hors ligne »** — ce serait faux. Il
+revendique que *le geste qui se fait sans réseau se fait sans réseau*.
+
+**Pourquoi ne pas étendre la file ?** La file **rejoue** les opérations : sans clé d'idempotence
+côté serveur, un rejeu après une réponse perdue créerait un **second prélèvement** sur les lots
+parents — du stock détruit dans la traçabilité. L'état des deux candidats diffère :
+
+- **Transformation** — l'API accepte désormais un `client_op_id` (idempotence livrée côté serveur).
+  Le verrou n'est plus là : il est que `/api/sync/scans` ne connaît que `type: 'receipt'`, et que le
+  moteur de sync mobile est bâti sur **son** protocole (lots de 100, 207 Multi-Status, dichotomie
+  sur 400). Faire porter la transformation par la file demande soit d'étendre ce endpoint, soit un
+  chemin unitaire parallèle dans `sync.ts` — le fichier le plus critique du mobile.
+- **Expédition** — aucune idempotence côté serveur à ce jour. Le rejeu y reste franchement dangereux.
+
+Dans les deux cas, le gain est nul en démonstration (c'est le même mécanisme qu'une réception) et le
+risque porte sur le stock. **Une limite honnête vaut mieux qu'une extension bâclée.**
 
 ## L'emplacement du lot — le « où »
 
@@ -317,8 +352,9 @@ tous les rôles (`ALL_ROLES` côté API) : remonter la chaîne d'un lot suspect 
 
 ## Limites connues
 
-- Seule la **réception** passe par la file de synchronisation offline (`type: 'receipt'`) : l'enum
-  du endpoint de sync n'accepte rien d'autre. Transformation, expédition, levée de quarantaine et
-  résolution d'alerte sont des écritures **en ligne**, refusées hors réseau.
+- Seule la **réception** passe par la file de synchronisation offline (`type: 'receipt'`).
+  Transformation, expédition, levée de quarantaine et résolution d'alerte sont des écritures
+  **en ligne**, refusées hors réseau — périmètre assumé, et bloqué par une dépendance API
+  (idempotence). Voir « Le périmètre du hors-ligne ».
 - Le **rappel produit** n'est pas accessible à l'`operator` — décision assumée, voir ci-dessous.
 - Pas de notifications push, pas de 2FA, pas de réinitialisation de mot de passe.
