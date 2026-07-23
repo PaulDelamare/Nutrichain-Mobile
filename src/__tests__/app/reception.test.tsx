@@ -1,4 +1,5 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react-native';
+import { useCurrentUser } from '@/hooks/use-current-user';
 import Toast from 'react-native-toast-message';
 
 import { loadProducts, loadSuppliers } from '@/lib/catalog';
@@ -13,6 +14,7 @@ import ReceptionScreen from '@/app/reception';
 const mockParams = { current: {} as { code?: string } };
 
 jest.mock('@/lib/catalog');
+jest.mock('@/hooks/use-current-user');
 jest.mock('@/lib/equipment');
 jest.mock('@/lib/sync/queue');
 jest.mock('@/lib/sync/sync');
@@ -42,9 +44,12 @@ async function fillValidReceipt(): Promise<void> {
   fireEvent.changeText(screen.getByPlaceholderText('0'), '10');
 }
 
+const mockedUser = jest.mocked(useCurrentUser);
+
 describe('écran de réception', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedUser.mockReturnValue({ user: null, loading: false });
     mockParams.current = {};
     catalog.loadSuppliers.mockResolvedValue([{ id: 'f-1', nom_ferme: 'Ferme Dupont' }]);
     // Le GTIN du produit permet de le retrouver depuis un code scanné (03042040209123 normalisé).
@@ -287,5 +292,19 @@ describe('écran de réception', () => {
     expect(jest.mocked(Toast.show)).not.toHaveBeenCalledWith(
       expect.objectContaining({ text2: expect.stringMatching(/dès que le réseau reviendra/i) })
     );
+  });
+  // (issue #71) La garde de l'accueil ne suffit pas : sur le web, `/réception` s'ouvre par URL
+  // directe, sans jamais passer par les cartes. Sans garde ICI, un `viewer` remplissait le
+  // formulaire, l'opération partait en file locale et n'était refusée qu'à la synchronisation.
+  it('refuse l’entrée à un viewer au lieu de lui offrir le formulaire', () => {
+    mockedUser.mockReturnValue({
+      user: { id: 'u1', name: 'Paul', email: 'p@n.local', role: 'viewer', organizationId: 'o1' },
+      loading: false,
+    });
+
+    render(<ReceptionScreen />);
+
+    expect(screen.getByText(/ne permet pas d’enregistrer|ne permet pas d'enregistrer/)).toBeTruthy();
+    expect(screen.queryByText(/Enregistrer la r/)).toBeNull();
   });
 });

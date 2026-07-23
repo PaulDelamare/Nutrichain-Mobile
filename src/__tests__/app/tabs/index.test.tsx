@@ -194,4 +194,66 @@ describe('écran d’accueil', () => {
     await waitFor(() => expect(screen.getByText('Lots en quarantaine')).toBeTruthy());
     expect(screen.getAllByText('—').length).toBeGreaterThan(0);
   });
+
+  // (issue #71) L'accueil offrait les quatre cartes à TOUS les rôles. Un `viewer` pouvait ouvrir la
+  // réception, scanner, saisir, valider — l'opération partait en file locale et n'était refusée
+  // qu'à la synchronisation (403 → REJECTED). Le travail était perdu après coup, sans prévenir.
+  const asRole = (role: string | null) =>
+    mockedUser.mockReturnValue({
+      user: { id: 'u1', name: 'Paul', email: 'paul@nutrichain.local', role, organizationId: 'o1' },
+      loading: false,
+    });
+
+  it('n’ouvre pas la réception à un viewer, et dit pourquoi', () => {
+    asRole('viewer');
+
+    render(<HomeScreen />);
+    fireEvent.press(screen.getByText('Réception'));
+
+    // Un bouton qui mène à un échec différé est pire qu'un bouton absent.
+    expect(mockedRouter.navigate).not.toHaveBeenCalledWith('/reception');
+    expect(screen.getByText(/ne permet pas d’enregistrer|ne permet pas d'enregistrer/)).toBeTruthy();
+  });
+
+  it('ferme aussi la transformation et l’expédition au viewer', () => {
+    asRole('viewer');
+
+    render(<HomeScreen />);
+    fireEvent.press(screen.getByText('Transformation'));
+    fireEvent.press(screen.getByText('Expédition'));
+
+    expect(mockedRouter.navigate).not.toHaveBeenCalledWith('/transformation');
+    expect(mockedRouter.navigate).not.toHaveBeenCalledWith('/expedition');
+  });
+
+  it('laisse la synchronisation ouverte à tous : elle n’écrit rien de neuf', () => {
+    // Purger sa propre file locale n'est pas une écriture métier — la fermer punirait un `viewer`
+    // qui a des opérations en attente d'un rôle qu'il avait avant.
+    asRole('viewer');
+
+    render(<HomeScreen />);
+    fireEvent.press(screen.getByText('Synchroniser'));
+
+    expect(mockedRouter.navigate).toHaveBeenCalledWith('/sync');
+  });
+
+  it('ne gêne pas l’opérateur, qui a le droit d’écrire', () => {
+    asRole('operator');
+
+    render(<HomeScreen />);
+    fireEvent.press(screen.getByText('Réception'));
+
+    expect(mockedRouter.navigate).toHaveBeenCalledWith('/reception');
+  });
+
+  // ⚠️ Le cas offline-first : `/api/me` exige le réseau. Un rôle inconnu ne doit PAS fermer
+  // l'écriture, sinon l'app s'auto-condamne en chambre froide — là où elle sert.
+  it('laisse passer quand le rôle est inconnu', () => {
+    asRole(null);
+
+    render(<HomeScreen />);
+    fireEvent.press(screen.getByText('Réception'));
+
+    expect(mockedRouter.navigate).toHaveBeenCalledWith('/reception');
+  });
 });

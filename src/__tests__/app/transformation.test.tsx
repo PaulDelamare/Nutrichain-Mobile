@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { useCurrentUser } from '@/hooks/use-current-user';
 
 import TransformationScreen from '@/app/transformation';
 import { loadBatches, lookupBatch, type Batch, type BatchLookup } from '@/lib/batches';
@@ -21,6 +22,7 @@ jest.mock('@/lib/batches', () => ({
 }));
 jest.mock('@/lib/catalog');
 jest.mock('@/lib/draft');
+jest.mock('@/hooks/use-current-user');
 jest.mock('@/lib/equipment', () => ({
   ...jest.requireActual('@/lib/equipment'),
   loadEquipment: jest.fn(),
@@ -106,9 +108,12 @@ async function scanLot(code: string) {
   fireEvent.press(screen.getByTestId('scan-now'));
 }
 
+const mockedUser = jest.mocked(useCurrentUser);
+
 describe('écran de transformation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedUser.mockReturnValue({ user: null, loading: false });
     mockedLookup.mockImplementation(resolveLocally);
     mockedLoadProducts.mockResolvedValue([
       { id: 'p-1', nom: 'Yaourt nature', unite_reference: 'kg', code_gtin: '3042040209123' },
@@ -358,5 +363,19 @@ describe('écran de transformation', () => {
     fireEvent.changeText(await screen.findByPlaceholderText('0'), '12.345');
 
     expect(screen.getByText('Nombre invalide (2 décimales maximum).')).toBeTruthy();
+  });
+  // (issue #71) La garde de l'accueil ne suffit pas : sur le web, `/transformation` s'ouvre par URL
+  // directe, sans jamais passer par les cartes. Sans garde ICI, un `viewer` remplissait le
+  // formulaire, l'opération partait en file locale et n'était refusée qu'à la synchronisation.
+  it('refuse l’entrée à un viewer au lieu de lui offrir le formulaire', () => {
+    mockedUser.mockReturnValue({
+      user: { id: 'u1', name: 'Paul', email: 'p@n.local', role: 'viewer', organizationId: 'o1' },
+      loading: false,
+    });
+
+    render(<TransformationScreen />);
+
+    expect(screen.getByText(/ne permet pas d’enregistrer|ne permet pas d'enregistrer/)).toBeTruthy();
+    expect(screen.queryByText(/Enregistrer la transformation/)).toBeNull();
   });
 });

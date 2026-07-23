@@ -1,6 +1,7 @@
 import { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from 'axios';
 
 import { apiClient } from './api';
+import { readCache, writeCache } from './cache';
 import { fetchCurrentUser } from './me';
 
 jest.mock('./cache');
@@ -81,5 +82,73 @@ describe('fetchCurrentUser', () => {
     routes({ '/api/me': { status: 401, data: { message: 'Unauthorized' } } });
 
     await expect(fetchCurrentUser()).rejects.toMatchObject({ status: 401 });
+  });
+});
+
+/**
+ * (issue #71) Le rôle pilote désormais l'affichage des écrans d'écriture. Or `/api/me` exige le
+ * réseau : sans mémoire locale, le rôle redevient inconnu à chaque chambre froide, et la garde
+ * s'évapore exactement là où l'application est utilisée.
+ */
+describe('fetchCurrentUser — mémoire du rôle', () => {
+  const mockedReadCache = jest.mocked(readCache);
+  const mockedWriteCache = jest.mocked(writeCache);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedReadCache.mockResolvedValue(null);
+    mockedWriteCache.mockResolvedValue(undefined);
+  });
+
+  /** Le réseau absent se présente comme une `ApiError` de statut 0 (`isNetworkError`). */
+  function offline(): void {
+    apiClient.defaults.adapter = (async (config: InternalAxiosRequestConfig) => {
+      throw new AxiosError('Network Error', 'ERR_NETWORK', config, {}, undefined);
+    }) as AxiosAdapter;
+  }
+
+  it('retient le rôle de chaque réponse fraîche', async () => {
+    routes({ '/api/me': me('viewer') });
+
+    await fetchCurrentUser();
+
+    expect(mockedWriteCache).toHaveBeenCalledWith('me', expect.objectContaining({ role: 'viewer' }));
+  });
+
+  it('rend le rôle mémorisé quand le réseau manque', async () => {
+    // Sans ça, un `viewer` hors ligne retrouvait les cartes d'écriture : le bouton trompeur
+    // revenait précisément dans le mode où l'app doit servir.
+    mockedReadCache.mockResolvedValue({
+      id: 'u1',
+      name: 'Paul Delamare',
+      email: 'paul@nutrichain.local',
+      role: 'viewer',
+      organizationId: 'org-1',
+    });
+    offline();
+
+    expect((await fetchCurrentUser()).role).toBe('viewer');
+  });
+
+  it('ne masque JAMAIS un 401 derrière le cache', async () => {
+    // ⚠️ Le mutant : un repli aveugle ferait passer une session MORTE pour vivante, et l'app
+    // resterait sur un écran qu'elle n'a plus le droit d'afficher.
+    mockedReadCache.mockResolvedValue({
+      id: 'u1',
+      name: 'Paul Delamare',
+      email: 'paul@nutrichain.local',
+      role: 'owner',
+      organizationId: 'org-1',
+    });
+    routes({ '/api/me': { status: 401, data: { message: 'Unauthorized' } } });
+
+    await expect(fetchCurrentUser()).rejects.toMatchObject({ status: 401 });
+  });
+
+  it('propage l’échec réseau quand rien n’a jamais été mémorisé', async () => {
+    // On ne fabrique pas un utilisateur vide : « je ne sais pas » doit remonter tel quel.
+    offline();
+
+    await expect(fetchCurrentUser()).rejects.toBeDefined();
   });
 });

@@ -39,6 +39,9 @@ import { syncPendingOperations } from '@/lib/sync/sync';
 import type { ReceiptPayload } from '@/lib/sync/types';
 import { BRAND, HEADER_GRADIENT } from '@/lib/theme';
 import { toastError } from '@/lib/toast';
+import { AccessDenied } from '@/components/access-denied';
+import { useCurrentUser } from '@/hooks/use-current-user';
+import { writeBlockedReason } from '@/lib/roles';
 
 // Libellés MÉTIER, pas les codes d'énum : un opérateur ne doit pas cocher « NONCONFORME » comme
 // une case anodine. Deux de ces statuts — ALERTE et NONCONFORME — créent le lot en quarantaine
@@ -62,6 +65,7 @@ const QUARANTINE_STATUSES = new Set(
 
 export default function ReceptionScreen() {
   const insets = useSafeAreaInsets();
+  const { user } = useCurrentUser();
   const { code } = useLocalSearchParams<{ code?: string }>();
 
   // Le scan doit REMPLIR le formulaire, pas y coller l'URL brute. On décode l'étiquette (Digital
@@ -294,6 +298,13 @@ export default function ReceptionScreen() {
     }
     void persistReceipt();
   };
+
+  // (issue #71) Garde À L'ENTRÉE, pas seulement sur l'accueil : sur le web, `/reception` s'ouvre
+  // par URL directe. `null` (rôle inconnu, hors ligne) laisse passer — cf. `canWrite`.
+  const writeBlocked = writeBlockedReason(user?.role ?? null);
+  if (writeBlocked) {
+    return <AccessDenied title="Réception" reason={writeBlocked} />;
+  }
 
   return (
     <View style={styles.screen}>

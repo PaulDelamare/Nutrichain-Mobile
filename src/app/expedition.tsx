@@ -37,6 +37,9 @@ import {
 } from '@/lib/shipment';
 import { BRAND, HEADER_GRADIENT } from '@/lib/theme';
 import { toastError, toastMessage } from '@/lib/toast';
+import { AccessDenied } from '@/components/access-denied';
+import { useCurrentUser } from '@/hooks/use-current-user';
+import { writeBlockedReason } from '@/lib/roles';
 
 interface LotLine {
   batch: Batch;
@@ -45,6 +48,7 @@ interface LotLine {
 
 export default function ExpeditionScreen() {
   const insets = useSafeAreaInsets();
+  const { user } = useCurrentUser();
   const online = useOnlineStatus();
 
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -222,6 +226,13 @@ export default function ExpeditionScreen() {
       setSaving(false);
     }
   };
+
+  // (issue #71) Garde À L'ENTRÉE, pas seulement sur l'accueil : sur le web, l'écran s'ouvre
+  // par URL directe. `null` (rôle inconnu, hors ligne) laisse passer — cf. `canWrite`.
+  const writeBlocked = writeBlockedReason(user?.role ?? null);
+  if (writeBlocked) {
+    return <AccessDenied title="Expédition" reason={writeBlocked} />;
+  }
 
   return (
     <View style={styles.screen}>

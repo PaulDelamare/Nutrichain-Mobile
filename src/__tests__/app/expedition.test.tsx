@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { useCurrentUser } from '@/hooks/use-current-user';
 import Toast from 'react-native-toast-message';
 
 import ExpeditionScreen from '@/app/expedition';
@@ -21,6 +22,7 @@ jest.mock('@/lib/shipment', () => ({
   createShipment: jest.fn(),
 }));
 jest.mock('@/lib/draft');
+jest.mock('@/hooks/use-current-user');
 jest.mock('@/lib/toast');
 // La confirmation de succès passe par `Toast.show` (pas `toastMessage`) : on le capture pour vérifier
 // que le n° d'expédition attribué par le serveur y est bien affiché.
@@ -108,9 +110,12 @@ async function scanLot(code: string) {
   fireEvent.press(screen.getByTestId('scan-now'));
 }
 
+const mockedUser = jest.mocked(useCurrentUser);
+
 describe('écran d’expédition', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedUser.mockReturnValue({ user: null, loading: false });
     mockedLookup.mockImplementation(resolveLocally);
     mockedLoadCustomers.mockResolvedValue([
       { id: 'c-1', nom_enseigne: 'Épicerie du Coin', adresse_livraison: '12 rue des Halles, Paris' },
@@ -373,5 +378,19 @@ describe('écran d’expédition', () => {
         expect.objectContaining({ shipment_id: 'EXP-2026-009' })
       )
     );
+  });
+  // (issue #71) La garde de l'accueil ne suffit pas : sur le web, `/expédition` s'ouvre par URL
+  // directe, sans jamais passer par les cartes. Sans garde ICI, un `viewer` remplissait le
+  // formulaire, l'opération partait en file locale et n'était refusée qu'à la synchronisation.
+  it('refuse l’entrée à un viewer au lieu de lui offrir le formulaire', () => {
+    mockedUser.mockReturnValue({
+      user: { id: 'u1', name: 'Paul', email: 'p@n.local', role: 'viewer', organizationId: 'o1' },
+      loading: false,
+    });
+
+    render(<ExpeditionScreen />);
+
+    expect(screen.getByText(/ne permet pas d’enregistrer|ne permet pas d'enregistrer/)).toBeTruthy();
+    expect(screen.queryByText(/Enregistrer l/)).toBeNull();
   });
 });
