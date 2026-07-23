@@ -43,6 +43,9 @@ import {
 } from '@/lib/transformation';
 import { BRAND, HEADER_GRADIENT } from '@/lib/theme';
 import { toastError, toastMessage } from '@/lib/toast';
+import { AccessDenied } from '@/components/access-denied';
+import { useCurrentUser } from '@/hooks/use-current-user';
+import { writeBlockedReason } from '@/lib/roles';
 
 interface ParentInput {
   batch: Batch;
@@ -54,6 +57,7 @@ type Scanning = 'cuve' | 'lot' | null;
 
 export default function TransformationScreen() {
   const insets = useSafeAreaInsets();
+  const { user } = useCurrentUser();
   const online = useOnlineStatus();
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -286,6 +290,13 @@ export default function TransformationScreen() {
       setSaving(false);
     }
   };
+
+  // (issue #71) Garde À L'ENTRÉE, pas seulement sur l'accueil : sur le web, l'écran s'ouvre
+  // par URL directe. `null` (rôle inconnu, hors ligne) laisse passer — cf. `canWrite`.
+  const writeBlocked = writeBlockedReason(user?.role ?? null);
+  if (writeBlocked) {
+    return <AccessDenied title="Transformation" reason={writeBlocked} />;
+  }
 
   return (
     <View style={styles.screen}>

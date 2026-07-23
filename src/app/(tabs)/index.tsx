@@ -16,7 +16,7 @@ import { useCurrentUser } from '@/hooks/use-current-user';
 import { useOnlineStatus, type OnlineStatus } from '@/hooks/use-online-status';
 import { loadActiveColdAlerts, type ColdAlerts } from '@/lib/alerts';
 import { loadQuarantineBatches, type QuarantineBatches } from '@/lib/quarantine';
-import { formatRole } from '@/lib/roles';
+import { formatRole, writeBlockedReason } from '@/lib/roles';
 import { countByStatus } from '@/lib/sync/queue';
 import type { OperationStatus } from '@/lib/sync/types';
 
@@ -62,16 +62,37 @@ interface QuickActionProps {
   title: string;
   subtitle: string;
   onPress: () => void;
+  /** (issue #71) Rôle sans droit d'écriture : la carte reste VISIBLE mais inerte, et dit pourquoi. */
+  blocked?: boolean;
 }
 
-function QuickAction({ icon, iconColor, iconBg, title, subtitle, onPress }: QuickActionProps) {
+function QuickAction({
+  icon,
+  iconColor,
+  iconBg,
+  title,
+  subtitle,
+  onPress,
+  blocked = false,
+}: QuickActionProps) {
   return (
-    <TouchableOpacity style={styles.actionCard} onPress={onPress} activeOpacity={0.75}>
-      <View style={[styles.actionIcon, { backgroundColor: iconBg }]}>
-        <Ionicons name={icon} size={18} color={iconColor} />
+    <TouchableOpacity
+      style={[styles.actionCard, blocked && styles.actionCardBlocked]}
+      onPress={onPress}
+      // Masquer la carte laisserait croire que la fonction n'existe pas ; la griser et la
+      // verrouiller dit la vérité : elle existe, mais pas pour ce rôle.
+      disabled={blocked}
+      activeOpacity={0.75}
+    >
+      <View style={[styles.actionIcon, { backgroundColor: blocked ? '#F3F4F6' : iconBg }]}>
+        <Ionicons
+          name={blocked ? 'lock-closed-outline' : icon}
+          size={18}
+          color={blocked ? '#9CA3AF' : iconColor}
+        />
       </View>
-      <Text style={styles.actionTitle}>{title}</Text>
-      <Text style={styles.actionSubtitle}>{subtitle}</Text>
+      <Text style={[styles.actionTitle, blocked && styles.actionTextBlocked]}>{title}</Text>
+      <Text style={[styles.actionSubtitle, blocked && styles.actionTextBlocked]}>{subtitle}</Text>
     </TouchableOpacity>
   );
 }
@@ -80,6 +101,9 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useCurrentUser();
   const online = useOnlineStatus();
+  // (issue #71) `null` tant que le rôle est inconnu (hors ligne, ou première réponse en vol) :
+  // on n'accuse pas sans savoir, et on ne ferme surtout pas l'écriture sur une supposition.
+  const writeBlocked = writeBlockedReason(user?.role ?? null);
   // ⚠️ TROIS états, jamais deux. « Je charge » et « je n'ai pas pu » ne sont PAS la même chose :
   // les confondre ferait clignoter un message d'échec à chaque ouverture de l'app — un mensonge
   // à l'envers. Et `0` n'est aucun des deux : un compteur initialisé à zéro affiche
@@ -206,6 +230,7 @@ export default function HomeScreen() {
             title="Réception"
             subtitle="Marchandise entrante"
             onPress={() => router.navigate('/reception')}
+            blocked={writeBlocked !== null}
           />
           <QuickAction
             icon="flask-outline"
@@ -214,6 +239,7 @@ export default function HomeScreen() {
             title="Transformation"
             subtitle="Cuve et lots utilisés"
             onPress={() => router.navigate('/transformation')}
+            blocked={writeBlocked !== null}
           />
           <QuickAction
             icon="send-outline"
@@ -222,6 +248,7 @@ export default function HomeScreen() {
             title="Expédition"
             subtitle="Lots chargés pour un client"
             onPress={() => router.navigate('/expedition')}
+            blocked={writeBlocked !== null}
           />
           <QuickAction
             icon="cloud-upload-outline"
@@ -242,6 +269,9 @@ export default function HomeScreen() {
             onPress={() => router.navigate('/sync')}
           />
         </View>
+
+        {/* Le motif, une seule fois sous la grille : le répéter sur trois cartes serait du bruit. */}
+        {writeBlocked && <Text style={styles.blockedNotice}>{writeBlocked}</Text>}
 
         {/* Lots en quarantaine — TOUJOURS présent : l'écran doit rester atteignable même à 0, et le
             compteur reste honnête (… en chargement, — si non vérifié, sinon le nombre). Avant, ces
@@ -445,6 +475,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  actionCardBlocked: { backgroundColor: '#F9FAFB', opacity: 0.7 },
+  actionTextBlocked: { color: '#9CA3AF' },
+  blockedNotice: {
+    fontSize: 12,
+    color: '#B45309',
+    backgroundColor: '#FEF3C7',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginTop: 10,
   },
   actionCard: {
     width: (SCREEN_WIDTH - 32 - 10) / 2,
