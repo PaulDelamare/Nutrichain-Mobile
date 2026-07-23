@@ -6,8 +6,10 @@
  * refus. Un écart entre les deux listes ne crée pas de faille (le 403 reste), mais rend
  * l'application menteuse — d'où le miroir explicite, à corriger si l'API change.
  *
- * L'ancien vocabulaire (`member`, `manager`, `logistics_*`, `quality_control`) a été REMPLACÉ
- * côté serveur ; il n'est conservé ici qu'en traduction, pour les sessions et journaux anciens.
+ * (issue #75) L'ancien vocabulaire (`member`, `manager`, `logistics_*`, `quality_control`) a été
+ * SUPPRIMÉ par la refonte RBAC de l'API : aucune route, aucun seed ne le produit plus. Le traduire
+ * encore ferait passer un état anormal pour un état légitime — un rôle imprévu doit se VOIR.
+ * `formatRole` le rend alors brut, ce qui est le comportement voulu.
  */
 const ROLE_LABELS: Record<string, string> = {
   owner: 'Propriétaire',
@@ -15,14 +17,6 @@ const ROLE_LABELS: Record<string, string> = {
   quality: 'Contrôle qualité',
   operator: 'Opérateur',
   viewer: 'Consultation',
-  // Vocabulaire retiré côté API — traduit encore pour ne rien afficher de brut.
-  manager: 'Responsable',
-  member: 'Membre',
-  logistics_owner: 'Responsable logistique',
-  logistics_admin: 'Administrateur logistique',
-  logistics_operator: 'Opérateur logistique',
-  logistics_viewer: 'Consultation logistique',
-  quality_control: 'Contrôle qualité',
 };
 
 /** Écritures métier : réception, transformation, expédition, scans terrain (`WRITE_ROLES`). */
