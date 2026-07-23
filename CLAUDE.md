@@ -2,7 +2,7 @@
 
 # NutriChain Mobile — guide projet
 
-App **terrain** des opérateurs NutriChain (Expo SDK 56 / React Native 0.85 / expo-router). Un opérateur scanne et saisit des **réceptions de lots** — souvent en chambre froide ou zone sans réseau. L'app est donc **offline-first** et **write-only** : elle *produit* la traçabilité (elle ne la consulte pas), la met en file locale SQLite, puis la synchronise vers l'API NutriChain (`Nutrichain-Api`, port 3000). Le web/back consomme cette donnée.
+App **terrain** des opérateurs NutriChain (Expo SDK 56 / React Native 0.85 / expo-router). Un opérateur scanne et saisit des **réceptions de lots** — souvent en chambre froide ou zone sans réseau. L'app est **offline-first sur son chemin d'écriture** : elle *produit* la traçabilité, la met en file locale SQLite, puis la synchronise vers l'API NutriChain (`Nutrichain-Api`, port 3000). Elle la **consulte** aussi, en lecture et en ligne — fiche de lot, lots en quarantaine, alertes froid — avec un état « non vérifiable » explicite quand la question n'a pas pu être posée. Le web/back reste le consommateur principal : généalogie, tableaux de bord, rappel produit.
 
 > ⚠️ **Expo a changé** (voir `AGENTS.md`, importé ci-dessus) : lire les docs versionnées <https://docs.expo.dev/versions/v56.0.0/> avant d'écrire du code Expo. Ne pas présumer d'API antérieures.
 
@@ -62,7 +62,7 @@ Auth **Better-Auth** : `POST /api/auth/sign-in/email` (avec `x-api-key`) renvoie
 
 - `EXPO_PUBLIC_API_KEY` = `API_KEY` de l'API. **Non-secret** (embarqué en clair dans le binaire) : simple portail, aucun droit sans session. `EXPO_PUBLIC_API_URL` selon la cible (cf. `.env.example`).
 - Rôles serveur (mono-valué/membre) : `owner`, `admin`, `quality`, `operator`, `viewer`. Écritures terrain (dont sync) = `owner|admin|operator`.
-- **Endpoints consommés** (README, table « Endpoints consommés ») : `POST /api/auth/{sign-in,sign-out}/email`, `GET /api/me`, `GET /api/organization/{members,suppliers,alerts}`, `GET /api/traceability/products`, **`POST /api/sync/scans`** — **seul point d'écriture** de l'app.
+- **Endpoints consommés** : liste complète dans la table « Endpoints consommés » du README (lecture / écriture). Le rôle vient de **`GET /api/me`**, pas de `/organization/members`. **`POST /api/sync/scans`** est le seul point d'écriture **passant par la file offline** ; transformation, expédition, levée de quarantaine et résolution d'alerte écrivent **en ligne**.
 - **`/api/sync/scans`** : `{ items: [{ clientOpId, type:'receipt', payload:{ id_fournisseur, shipment_id, id_produit, quantite_actuelle, unite_code, statut_controle, id_materiel? } }] }`. `type:'receipt'` est le **seul** type synchronisable en v1 (transformation/expédition = P3). `received_by` est **forcé serveur-side** (utilisateur de session) — ne pas tenter de l'usurper.
 
 ## Conventions
@@ -95,8 +95,8 @@ La couverture est la plus dense dans `src/lib/sync/` et `src/lib/api.test.ts` ; 
 
 ## Contexte NutriChain (docs détaillées dans `Nutrichain-Api/docs/`)
 
-Traçabilité agroalimentaire « de la ferme au rayon », standards **GS1/EPCIS** (GTIN produit, SSCC palette, lot `AAMMJJ-XXXXXX`), **chaîne du froid IoT** (excursion température → alerte + quarantaine auto des lots), **rappel produit** (blocage en cascade de la descendance < 15 min), **multi-tenancy strict** (tout porte `organization_id` ; un rôle dans une org n'accède pas à une autre), **audit WORM** (journal chaîné par hash). Le mobile ne fait ni l'ingest IoT (M2M capteurs) ni les rappels — il **produit les réceptions** et consomme catalogue + alertes.
+Traçabilité agroalimentaire « de la ferme au rayon », standards **GS1/EPCIS** (GTIN produit, SSCC palette, lot `AAMMJJ-XXXXXX`), **chaîne du froid IoT** (excursion température → alerte + quarantaine auto des lots), **rappel produit** (blocage en cascade de la descendance < 15 min), **multi-tenancy strict** (tout porte `organization_id` ; un rôle dans une org n'accède pas à une autre), **audit WORM** (journal chaîné par hash). Le mobile ne fait ni l'ingest IoT (M2M capteurs) ni les rappels (ni la généalogie) — il **produit les réceptions**, consomme catalogue + alertes, et **consulte les lots** (fiche, quarantaine, résolution d'un code scanné).
 
 ## Limites connues (README)
 
-Write-only (aucune consultation traçabilité) ; seule la **réception** est synchronisable ; pas de parsing GS1 du code scanné ; cache catalogue sans TTL ; pas de push, ni 2FA, ni reset mot de passe.
+Seule la **réception** passe par la file de synchronisation offline (`type: 'receipt'`) : transformation, expédition, levée de quarantaine et résolution d'alerte sont des écritures **en ligne**, refusées hors réseau. Pas de push, ni 2FA, ni reset mot de passe.

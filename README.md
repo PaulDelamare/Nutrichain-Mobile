@@ -6,9 +6,10 @@ Un opérateur scanne et saisit une réception **dans une chambre froide, un entr
 une zone sans réseau**. L'application est donc conçue pour fonctionner **hors ligne d'abord** :
 rien de ce qu'elle enregistre ne dépend du réseau au moment de la saisie.
 
-**Le mobile PRODUIT la traçabilité** (scans, réceptions, emplacements) ; le front web la
-**consomme** (généalogie, tableaux de bord, rappel produit). Ce que le mobile ne capture pas
-n'existera jamais dans le suivi.
+**Le mobile PRODUIT la traçabilité** (scans, réceptions, emplacements) et en **consulte** ce dont
+l'opérateur a besoin devant le camion : fiche d'un lot, lots en quarantaine, alertes froid. La
+**généalogie**, les tableaux de bord et le **rappel produit** restent au front web. Ce que le mobile
+ne capture pas n'existera jamais dans le suivi.
 
 ## Démarrage
 
@@ -160,17 +161,35 @@ sans emplacement ne sera jamais isolé si son frigo dérive.**
 
 ## Endpoints consommés
 
-| Endpoint                          | Usage                                          |
-| --------------------------------- | ---------------------------------------------- |
-| `POST /api/auth/sign-in/email`    | Connexion (+ `x-api-key`)                      |
-| `POST /api/auth/sign-out`         | Déconnexion (+ `x-api-key`)                    |
-| `GET /api/me`                     | Identité et organisation active                |
-| `GET /api/organization/members`   | Rôle de l'utilisateur (échec toléré)           |
-| `GET /api/organization/suppliers` | Catalogue fournisseurs (mis en cache)          |
-| `GET /api/traceability/products`  | Catalogue produits (mis en cache)              |
-| `GET /api/organization/equipment` | Matériels et leurs étiquettes (mis en cache)   |
-| `GET /api/organization/alerts`    | Alertes chaîne du froid (filtrées côté client) |
-| `POST /api/sync/scans`            | **Le seul point d'écriture de l'application**  |
+**Lecture**
+
+| Endpoint                                  | Usage                                          |
+| ----------------------------------------- | ---------------------------------------------- |
+| `POST /api/auth/sign-in/email`            | Connexion (+ `x-api-key`)                      |
+| `POST /api/auth/sign-out`                 | Déconnexion (+ `x-api-key`)                    |
+| `GET /api/health`                         | Sonde de connectivité (`use-online-status`)    |
+| `GET /api/me`                             | Identité, organisation active **et rôle**      |
+| `GET /api/organization/suppliers`         | Catalogue fournisseurs (cache, TTL 7 j)        |
+| `GET /api/organization/customers`         | Catalogue clients (cache, TTL 7 j)             |
+| `GET /api/traceability/products`          | Catalogue produits (cache, TTL 7 j)            |
+| `GET /api/organization/equipment`         | Matériels et leurs étiquettes (cache, TTL 7 j) |
+| `GET /api/organization/alerts`            | Alertes chaîne du froid (filtrées côté client) |
+| `GET /api/organization/quarantine-batches`| Lots en quarantaine                            |
+| `GET /api/traceability/batches`           | Catalogue des lots (cache, sans TTL)           |
+| `GET /api/logistics/batches/:id`          | Fiche d'un lot                                 |
+| `GET /api/logistics/batches/resolve`      | Résolution d'un lot depuis le code scanné      |
+| `GET /api/alerts/:id/batches`             | Lots touchés par une alerte                    |
+
+**Écriture** — `POST /api/sync/scans` est le seul point d'écriture **passant par la file offline** ;
+les autres exigent le réseau au moment de l'action.
+
+| Endpoint                                  | Usage                                          |
+| ----------------------------------------- | ---------------------------------------------- |
+| `POST /api/sync/scans`                    | Réceptions, **via la file offline**            |
+| `POST /api/traceability/transformations`  | Transformation (en ligne)                      |
+| `POST /api/logistics/shipments`           | Expédition (en ligne)                          |
+| `POST /api/logistics/batches/:id/release` | Levée de quarantaine (en ligne)                |
+| `PATCH /api/alerts/:id/resolve`           | Résolution d'une alerte (en ligne)             |
 
 ## Architecture
 
@@ -274,10 +293,8 @@ passer, force push et suppression bloqués.
 
 ## Limites connues
 
-- Le code scanné pré-remplit le n° d'expédition : il n'est **ni parsé (GS1) ni résolu** contre
-  l'API — aucun endpoint de recherche d'un lot par code n'existe côté serveur.
-- L'application est **write-only** : aucune consultation de traçabilité (c'est le rôle du front).
-- Seule la **réception** est synchronisable (`type: 'receipt'`). Transformation et expédition sont
-  bloquées côté API : l'enum du endpoint de sync ne les accepte pas.
-- Le cache du catalogue n'a **pas de durée de validité**.
+- Seule la **réception** passe par la file de synchronisation offline (`type: 'receipt'`) : l'enum
+  du endpoint de sync n'accepte rien d'autre. Transformation, expédition, levée de quarantaine et
+  résolution d'alerte sont des écritures **en ligne**, refusées hors réseau.
+- La **généalogie** et le **rappel produit** ne sont pas dans le mobile : ils restent au front web.
 - Pas de notifications push, pas de 2FA, pas de réinitialisation de mot de passe.
