@@ -1,17 +1,30 @@
 import { canQuality, canWrite, formatRole, recallBlockedReason, writeBlockedReason } from './roles';
 
 describe('formatRole', () => {
-  it('traduit les rôles de l’organisation', () => {
+  // (issues #71 / #75) Les CINQ rôles canoniques, et eux seuls. `quality` et `viewer` manquaient :
+  // ils s'affichaient en anglais brut au milieu d'une interface française.
+  it('traduit les cinq rôles canoniques du serveur', () => {
     expect(formatRole('owner')).toBe('Propriétaire');
-    expect(formatRole('operator')).toBe('Opérateur');
-  });
-
-  // (issue #71) Le vocabulaire serveur a changé : `quality` et `viewer` ont remplacé
-  // `quality_control` et les `logistics_*`. Sans eux, un contrôleur qualité lisait « quality » brut.
-  it('traduit les rôles canoniques du serveur', () => {
     expect(formatRole('admin')).toBe('Administrateur');
     expect(formatRole('quality')).toBe('Contrôle qualité');
+    expect(formatRole('operator')).toBe('Opérateur');
     expect(formatRole('viewer')).toBe('Consultation');
+  });
+
+  /**
+   * (issue #75) L'ancien vocabulaire a été SUPPRIMÉ par la refonte RBAC de l'API : plus aucune
+   * route, plus aucun seed ne le produit. Le garder entretenait une table à double vocabulaire
+   * dont la moitié ne pouvait plus jamais apparaître.
+   *
+   * ⚠️ Le mutant à tuer : les réintroduire « au cas où ». Traduire un rôle que l'API ne produit
+   * plus ferait passer un état anormal pour un état légitime — mieux vaut le voir brut.
+   */
+  it('n’entretient plus l’ancien vocabulaire retiré de l’API', () => {
+    expect(formatRole('logistics_operator')).toBe('logistics_operator');
+    expect(formatRole('logistics_owner')).toBe('logistics_owner');
+    expect(formatRole('quality_control')).toBe('quality_control');
+    expect(formatRole('manager')).toBe('manager');
+    expect(formatRole('member')).toBe('member');
   });
 
   it('affiche tel quel un rôle inconnu plutôt que rien', () => {

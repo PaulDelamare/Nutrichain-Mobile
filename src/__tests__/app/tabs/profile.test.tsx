@@ -19,7 +19,7 @@ const OPERATEUR = {
   id: 'u-1',
   name: 'Paul Delamare',
   email: 'paul@nutrichain.local',
-  role: 'logistics_operator',
+  role: 'operator',
   organizationId: 'org-1',
 };
 
@@ -39,9 +39,10 @@ describe('écran de profil', () => {
   });
 
   it('traduit le rôle technique en langage métier', () => {
+    // (issue #75) `operator` → « Opérateur », pas le code brut au milieu d'une interface française.
     render(<ProfileScreen />);
 
-    expect(screen.getByText('Opérateur logistique')).toBeTruthy();
+    expect(screen.getByText('Opérateur')).toBeTruthy();
   });
 
   it('déconnecte et renvoie à l’écran de connexion', async () => {
