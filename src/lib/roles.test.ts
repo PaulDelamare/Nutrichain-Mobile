@@ -1,4 +1,4 @@
-import { canWrite, formatRole, writeBlockedReason } from './roles';
+import { canQuality, canWrite, formatRole, recallBlockedReason, writeBlockedReason } from './roles';
 
 describe('formatRole', () => {
   it('traduit les rôles de l’organisation', () => {
@@ -52,6 +52,55 @@ describe('canWrite', () => {
    */
   it('laisse passer quand le rôle est INCONNU, jamais l’inverse', () => {
     expect(canWrite(null)).toBe(true);
+  });
+});
+
+/**
+ * (issue #89) `QUALITY_ROLES` exclut l'`operator` — la persona même de cette app. Ce n'est pas un
+ * oubli : celui qui réceptionne ne signe pas le rappel qui bloque son lot (séparation HACCP).
+ */
+describe('canQuality', () => {
+  it('autorise owner, admin et quality', () => {
+    expect(canQuality('owner')).toBe(true);
+    expect(canQuality('admin')).toBe(true);
+    expect(canQuality('quality')).toBe(true);
+  });
+
+  it('refuse l’operator — il écrit des réceptions mais ne SIGNE pas un rappel', () => {
+    expect(canQuality('operator')).toBe(false);
+    expect(canQuality('viewer')).toBe(false);
+  });
+
+  /**
+   * ⚠️ Le contraire de `canWrite`, et c'est VOULU. La permissivité de `canWrite` protège la saisie
+   * hors ligne ; le rappel est en ligne uniquement, donc cet argument tombe. Offrir l'action la
+   * plus destructrice du système sans pouvoir confirmer le droit recréerait l'échec 403 différé.
+   */
+  it('refuse quand le rôle est INCONNU, à l’inverse de canWrite', () => {
+    expect(canQuality(null)).toBe(false);
+    expect(canWrite(null)).toBe(true);
+  });
+});
+
+describe('recallBlockedReason', () => {
+  it('ne dit rien au contrôle qualité', () => {
+    expect(recallBlockedReason('quality')).toBeNull();
+  });
+
+  it('invoque la sécurité sanitaire, pas un code de rôle', () => {
+    const reason = recallBlockedReason('operator');
+
+    expect(reason).toContain('contrôle qualité');
+    expect(reason).toContain('Opérateur');
+    expect(reason).not.toContain('QUALITY_ROLES');
+  });
+
+  it('distingue « non vérifié » de « pas le droit »', () => {
+    // Accuser l'utilisateur d'un manque de droits qu'on n'a PAS pu constater serait un mensonge.
+    const inconnu = recallBlockedReason(null);
+
+    expect(inconnu).toContain('non vérifié');
+    expect(inconnu).not.toContain('ne le permet pas');
   });
 });
 

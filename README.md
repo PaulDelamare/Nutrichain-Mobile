@@ -7,8 +7,9 @@ une zone sans réseau**. L'application est donc conçue pour fonctionner **hors 
 rien de ce qu'elle enregistre ne dépend du réseau au moment de la saisie.
 
 **Le mobile PRODUIT la traçabilité** (scans, réceptions, emplacements) et en **consulte** ce dont
-l'opérateur a besoin devant le camion : fiche d'un lot, lots en quarantaine, alertes froid. La
-**généalogie**, les tableaux de bord et le **rappel produit** restent au front web. Ce que le mobile
+l'opérateur a besoin devant le camion : fiche d'un lot, **généalogie** du lot, lots en quarantaine,
+alertes froid. Il sait aussi **déclencher un rappel produit** — mais seulement pour les rôles
+qualité (voir la décision ci-dessous). Les tableaux de bord restent au front web. Ce que le mobile
 ne capture pas n'existera jamais dans le suivi.
 
 ## Démarrage
@@ -179,6 +180,7 @@ sans emplacement ne sera jamais isolé si son frigo dérive.**
 | `GET /api/logistics/batches/:id`          | Fiche d'un lot                                 |
 | `GET /api/logistics/batches/resolve`      | Résolution d'un lot depuis le code scanné      |
 | `GET /api/alerts/:id/batches`             | Lots touchés par une alerte                    |
+| `GET /api/traceability/batches/:id/genealogy` | Chaîne d'un lot (amont, aval, origines) |
 
 **Écriture** — `POST /api/sync/scans` est le seul point d'écriture **passant par la file offline** ;
 les autres exigent le réseau au moment de l'action.
@@ -190,6 +192,7 @@ les autres exigent le réseau au moment de l'action.
 | `POST /api/logistics/shipments`           | Expédition (en ligne)                          |
 | `POST /api/logistics/batches/:id/release` | Levée de quarantaine (en ligne)                |
 | `PATCH /api/alerts/:id/resolve`           | Résolution d'une alerte (en ligne)             |
+| `POST /api/traceability/batches/:id/recall` | Rappel produit (en ligne, rôles qualité) |
 
 ## Architecture
 
@@ -291,10 +294,31 @@ Sans effet en natif — une application native n'envoie pas d'en-tête `Origin`.
 Les deux branches durables sont protégées : PR obligatoire, les 4 vérifications de CI doivent
 passer, force push et suppression bloqués.
 
+## Décision : qui peut déclencher un rappel ? (issue #89)
+
+Le rappel produit est gardé côté API par `QUALITY_ROLES` = `owner | admin | quality`
+(`roles.constants.ts`). **L'`operator` en est exclu** — or c'est la persona principale de cette
+application. Ce n'est pas un oubli d'implémentation : c'est une **séparation des tâches HACCP**.
+Celui qui réceptionne un lot ne signe pas le rappel qui le bloque.
+
+**Décision retenue : le rappel existe dans le mobile, mais n'apparaît que pour les rôles qualité.**
+
+- Un `operator` ne voit **pas** le bouton : il lit le motif (« un rappel engage la sécurité
+  sanitaire : il est réservé au contrôle qualité »). Il n'obtient jamais un 403 après coup.
+- Un rôle non vérifié (hors ligne, `/api/me` injoignable) affiche un message **différent** —
+  « rôle non vérifié » n'est pas « vous n'avez pas le droit ».
+- Le rappel exige le réseau : il ne passe **pas** par la file offline, et le bouton disparaît hors
+  ligne plutôt que de promettre une mise en attente qui n'existe pas.
+
+L'alternative — laisser le rappel au seul front web — a été écartée : le produit promet un
+« blocage en cascade de la descendance en moins de 15 minutes ». Obliger un responsable qualité à
+regagner un bureau pour déclencher contredit cette promesse. La **généalogie**, elle, est ouverte à
+tous les rôles (`ALL_ROLES` côté API) : remonter la chaîne d'un lot suspect est un besoin terrain.
+
 ## Limites connues
 
 - Seule la **réception** passe par la file de synchronisation offline (`type: 'receipt'`) : l'enum
   du endpoint de sync n'accepte rien d'autre. Transformation, expédition, levée de quarantaine et
   résolution d'alerte sont des écritures **en ligne**, refusées hors réseau.
-- La **généalogie** et le **rappel produit** ne sont pas dans le mobile : ils restent au front web.
+- Le **rappel produit** n'est pas accessible à l'`operator` — décision assumée, voir ci-dessous.
 - Pas de notifications push, pas de 2FA, pas de réinitialisation de mot de passe.

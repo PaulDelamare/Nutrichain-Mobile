@@ -28,6 +28,15 @@ const ROLE_LABELS: Record<string, string> = {
 /** Écritures métier : réception, transformation, expédition, scans terrain (`WRITE_ROLES`). */
 const WRITE_ROLES = ['owner', 'admin', 'operator'];
 
+/**
+ * Décisions qualité : rappel produit, levée de quarantaine, résolution d'alerte (`QUALITY_ROLES`).
+ *
+ * ⚠️ L'`operator` — la persona de cette application — en est EXCLU, délibérément : celui qui
+ * réceptionne un lot ne signe pas le rappel qui le bloque (séparation des tâches HACCP,
+ * cf. `roles.constants.ts:42`). Ce n'est pas un oubli d'implémentation mais une frontière.
+ */
+const QUALITY_ROLES = ['owner', 'admin', 'quality'];
+
 /** Un rôle inconnu s'affiche brut : l'API peut en introduire un avant le mobile. */
 export function formatRole(role: string): string {
   return ROLE_LABELS[role] ?? role;
@@ -55,4 +64,37 @@ export function writeBlockedReason(role: string | null): string | null {
   }
 
   return `Votre rôle (${formatRole(role as string)}) ne permet pas d'enregistrer une opération. Demandez un accès opérateur.`;
+}
+
+/**
+ * (issue #89) Le rappel produit est-il permis ? Contrairement à `canWrite`, un rôle INCONNU
+ * répond `false`.
+ *
+ * La permissivité de `canWrite` n'existe que pour une raison : ne pas enfermer l'opérateur en
+ * chambre froide, où la saisie doit marcher sans réseau. Le rappel, lui, est **en ligne
+ * uniquement** — cet argument ne s'applique pas. Et c'est l'action la plus destructrice du
+ * système (blocage en cascade de toute la descendance) : l'offrir sans pouvoir confirmer le
+ * droit, c'est recréer l'échec 403 différé que l'application vient d'éliminer.
+ */
+export function canQuality(role: string | null): boolean {
+  return role !== null && QUALITY_ROLES.includes(role);
+}
+
+/**
+ * Pourquoi le rappel est indisponible — ou `null` s'il est permis.
+ *
+ * ⚠️ TROIS états, jamais deux : « on ne sait pas » n'est PAS « vous n'avez pas le droit ». Un
+ * rôle non vérifié doit le dire, et non accuser l'utilisateur d'un manque de droits qu'on n'a
+ * pas pu constater.
+ */
+export function recallBlockedReason(role: string | null): string | null {
+  if (role === null) {
+    return "Rôle non vérifié : impossible de confirmer que vous pouvez déclencher un rappel. Vérifiez votre connexion.";
+  }
+
+  if (canQuality(role)) {
+    return null;
+  }
+
+  return `Un rappel engage la sécurité sanitaire : il est réservé au contrôle qualité. Votre rôle (${formatRole(role)}) ne le permet pas.`;
 }
