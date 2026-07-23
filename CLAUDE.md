@@ -2,7 +2,7 @@
 
 # NutriChain Mobile — guide projet
 
-App **terrain** des opérateurs NutriChain (Expo SDK 56 / React Native 0.85 / expo-router). Un opérateur scanne et saisit des **réceptions de lots** — souvent en chambre froide ou zone sans réseau. L'app est **offline-first sur son chemin d'écriture** : elle *produit* la traçabilité, la met en file locale SQLite, puis la synchronise vers l'API NutriChain (`Nutrichain-Api`, port 3000). Elle la **consulte** aussi, en lecture et en ligne — fiche de lot, lots en quarantaine, alertes froid — avec un état « non vérifiable » explicite quand la question n'a pas pu être posée. Le web/back reste le consommateur principal : généalogie, tableaux de bord, rappel produit.
+App **terrain** des opérateurs NutriChain (Expo SDK 56 / React Native 0.85 / expo-router). Un opérateur scanne et saisit des **réceptions de lots** — souvent en chambre froide ou zone sans réseau. L'app est **offline-first sur son chemin d'écriture** : elle *produit* la traçabilité, la met en file locale SQLite, puis la synchronise vers l'API NutriChain (`Nutrichain-Api`, port 3000). Elle la **consulte** aussi, en lecture et en ligne — fiche de lot, lots en quarantaine, alertes froid — avec un état « non vérifiable » explicite quand la question n'a pas pu être posée. Elle remonte aussi la **généalogie** d'un lot et sait **déclencher un rappel** — réservé aux rôles qualité (`QUALITY_ROLES`), l'`operator` en est exclu par séparation HACCP (cf. README « Décision : qui peut déclencher un rappel ? »). Les tableaux de bord restent au web.
 
 > ⚠️ **Expo a changé** (voir `AGENTS.md`, importé ci-dessus) : lire les docs versionnées <https://docs.expo.dev/versions/v56.0.0/> avant d'écrire du code Expo. Ne pas présumer d'API antérieures.
 
@@ -95,7 +95,7 @@ La couverture est la plus dense dans `src/lib/sync/` et `src/lib/api.test.ts` ; 
 
 ## Contexte NutriChain (docs détaillées dans `Nutrichain-Api/docs/`)
 
-Traçabilité agroalimentaire « de la ferme au rayon », standards **GS1/EPCIS** (GTIN produit, SSCC palette, lot `AAMMJJ-XXXXXX`), **chaîne du froid IoT** (excursion température → alerte + quarantaine auto des lots), **rappel produit** (blocage en cascade de la descendance < 15 min), **multi-tenancy strict** (tout porte `organization_id` ; un rôle dans une org n'accède pas à une autre), **audit WORM** (journal chaîné par hash). Le mobile ne fait ni l'ingest IoT (M2M capteurs) ni les rappels (ni la généalogie) — il **produit les réceptions**, consomme catalogue + alertes, et **consulte les lots** (fiche, quarantaine, résolution d'un code scanné).
+Traçabilité agroalimentaire « de la ferme au rayon », standards **GS1/EPCIS** (GTIN produit, SSCC palette, lot `AAMMJJ-XXXXXX`), **chaîne du froid IoT** (excursion température → alerte + quarantaine auto des lots), **rappel produit** (blocage en cascade de la descendance < 15 min), **multi-tenancy strict** (tout porte `organization_id` ; un rôle dans une org n'accède pas à une autre), **audit WORM** (journal chaîné par hash). Le mobile ne fait pas l'ingest IoT (M2M capteurs) — il **produit les réceptions**, consomme catalogue + alertes, **consulte les lots** (fiche, généalogie, quarantaine, résolution d'un code scanné) et **déclenche les rappels** pour les rôles qualité uniquement.
 
 ## Limites connues (README)
 
