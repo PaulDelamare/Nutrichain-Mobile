@@ -72,8 +72,16 @@ liste à la main.
 
 Également assumés (à mettre dans un « Limitations connues » du README) : garde-fou de bilan matière
 (`RecipeComposition` inexploitable), maintenance/hygiène HACCP (table morte), historique thermique du
-camion (déclaré par le client), `PerformanceStat` (table morte), MFA non imposée, secret partagé
-entre capteurs, ABAC par site, rétention RGPD.
+camion (déclaré par le client), `PerformanceStat` (table morte), secret partagé entre capteurs, ABAC
+par site, rétention RGPD.
+
+~~MFA non imposée~~ — la 2FA (TOTP) est codée et testée (`/verify-2fa`, suite unitaire verte).
+⚠️ **Non vérifié sur appareil/simulateur** : le défi Better-Auth repose sur un cookie `two_factor`
+signé, renvoyé par le serveur puis réémis par le client au `verify-totp` — l'app n'a AUCUNE gestion
+de cookie explicite, elle compte sur le stockage natif (iOS/Android) qu'utilise React Native par
+défaut. Web (front) avait le même mécanisme et cachait un vrai bug de relais, trouvé seulement en
+testant dans un navigateur réel. À rejouer ici sur un appareil avant de considérer le parcours
+prouvé.
 
 ## 🎓 Soutenance — [le meilleur ratio effort/note](https://github.com/PaulDelamare/Nutrichain-Api/labels/soutenance)
 

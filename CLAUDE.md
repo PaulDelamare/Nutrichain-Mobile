@@ -99,4 +99,4 @@ Traçabilité agroalimentaire « de la ferme au rayon », standards **GS1/EPCIS*
 
 ## Limites connues (README)
 
-Seule la **réception** passe par la file de synchronisation offline (`type: 'receipt'`) : transformation, expédition, levée de quarantaine et résolution d'alerte sont des écritures **en ligne**, refusées hors réseau. Pas de push, ni 2FA, ni reset mot de passe.
+Seule la **réception** passe par la file de synchronisation offline (`type: 'receipt'`) : transformation, expédition, levée de quarantaine et résolution d'alerte sont des écritures **en ligne**, refusées hors réseau. Pas de push, ni reset mot de passe. La 2FA (TOTP) est prise en charge (`/verify-2fa`) : la connexion redirige vers cet écran quand l'API renvoie `twoFactorRedirect`.
