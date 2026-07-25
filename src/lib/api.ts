@@ -19,6 +19,14 @@ export const apiClient = axios.create({
   // de mouvements, de maillons d'audit et un événement EPCIS. Abandonner à 10 s ferait croire à
   // un échec une opération que le serveur a commitée — et l'opérateur la resaisirait.
   timeout: 30000,
+  // Le défi 2FA (`/two-factor/verify-totp`) dépend d'un cookie posé par le serveur à la connexion
+  // (`two_factor`, signé, HttpOnly) et réémis par le client à l'appel suivant — sans alternative
+  // par le corps de la requête. Axios ne touche `withCredentials` que si la config le précise
+  // explicitement ; laissé à `undefined`, la cible web hérite du défaut natif du navigateur
+  // (`false`), et le cookie ne repart jamais : le défi échoue en boucle avec un code pourtant
+  // correct. La cible native (iOS/Android) a un défaut différent, mais rien ne garantit qu'il ne
+  // change pas d'une version RN à l'autre — on le fixe donc explicitement, sur les deux cibles.
+  withCredentials: true,
 });
 
 apiClient.interceptors.request.use(async (config) => {
@@ -106,38 +114,62 @@ async function clearSession(): Promise<void> {
   await clearUserId();
 }
 
-export async function signIn(email: string, password: string): Promise<void> {
-  const { data } = await apiClient.post<{ token?: string; user?: { id: string } }>(
-    '/api/auth/sign-in/email',
-    { email, password }
-  );
+type SignInPayload = { token?: string; user?: { id: string } };
 
-  // Better-Auth omet le jeton quand un second facteur est requis : sans ce garde-fou,
-  // l'app se croirait connectée et enchaînerait des 401 sur chaque écran.
-  if (!data.token || !data.user?.id) {
-    throw new ApiError(
-      'Double authentification non prise en charge par l’application.',
-      401,
-      'two_factor'
-    );
-  }
-
-  // Le catalogue en cache est celui de l'organisation du PRÉCÉDENT connecté. On le purge ici,
-  // au moment où l'on sait enfin qui arrive — et non dès qu'une requête est refusée, ce qui
-  // détruirait les fournisseurs et produits sous les doigts d'un opérateur en pleine saisie.
+/**
+ * Écrit la session locale à partir d'une réponse Better-Auth réussie (connexion directe OU
+ * validation du second facteur — même forme de réponse dans les deux cas). Le catalogue en cache
+ * est celui de l'organisation du PRÉCÉDENT connecté : on le purge ici, au moment où l'on sait
+ * enfin qui arrive — et non dès qu'une requête est refusée, ce qui détruirait les fournisseurs et
+ * produits sous les doigts d'un opérateur en pleine saisie.
+ *
+ * L'identité s'écrit AVANT le jeton, et le jeton est retiré si elle échoue : c'est le jeton qui
+ * autorise l'envoi, l'identité qui désigne le propriétaire des scans. Dans l'autre ordre, un
+ * coffre défaillant laisserait un jeton neuf cohabiter avec l'identité de l'opérateur précédent.
+ */
+async function completeSession(data: SignInPayload): Promise<void> {
   await clearCache();
-
-  // L'identité s'écrit AVANT le jeton, et le jeton est retiré si elle échoue : c'est le jeton qui
-  // autorise l'envoi, l'identité qui désigne le propriétaire des scans. Dans l'autre ordre, un
-  // coffre défaillant laisserait un jeton neuf cohabiter avec l'identité de l'opérateur précédent.
-  await saveUserId(data.user.id);
+  await saveUserId(data.user!.id);
 
   try {
-    await saveToken(data.token);
+    await saveToken(data.token!);
   } catch (error) {
     await clearUserId();
     throw error;
   }
+}
+
+export async function signIn(email: string, password: string): Promise<void> {
+  const { data } = await apiClient.post<SignInPayload>('/api/auth/sign-in/email', {
+    email,
+    password,
+  });
+
+  // Better-Auth omet le jeton quand un second facteur est requis : sans ce garde-fou,
+  // l'app se croirait connectée et enchaînerait des 401 sur chaque écran. L'écran de connexion
+  // reconnaît ce champ pour ouvrir l'écran de vérification, plutôt que d'afficher une erreur.
+  if (!data.token || !data.user?.id) {
+    throw new ApiError('Code de vérification requis.', 401, 'two_factor_required');
+  }
+
+  await completeSession(data);
+}
+
+/**
+ * Valide le code TOTP après un `signIn` bloqué par `twoFactorRedirect`. Même endpoint Better-Auth
+ * que la confirmation d'enrôlement côté API — la session (cookie de défi en attente) est portée
+ * nativement par le client HTTP de la plateforme, pas gérée en JS ici.
+ */
+export async function verifyTwoFactorTotp(code: string): Promise<void> {
+  const { data } = await apiClient.post<SignInPayload>('/api/auth/two-factor/verify-totp', {
+    code,
+  });
+
+  if (!data.token || !data.user?.id) {
+    throw new ApiError('Code de vérification invalide.', 401, 'two_factor_required');
+  }
+
+  await completeSession(data);
 }
 
 export async function signOut(): Promise<void> {

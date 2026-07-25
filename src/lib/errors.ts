@@ -63,7 +63,7 @@ export function getErrorMessage(error: unknown): string {
     return "Configuration invalide : clé API refusée par le serveur. Contactez l'administrateur.";
   }
 
-  if (error.field === 'two_factor') {
+  if (error.field === 'two_factor_required') {
     return error.message;
   }
 

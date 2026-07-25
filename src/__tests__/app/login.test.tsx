@@ -13,7 +13,7 @@ jest.mock('@expo-google-fonts/rajdhani', () => ({
   Rajdhani_700Bold: 'Rajdhani_700Bold',
 }));
 jest.mock('@/lib/api');
-jest.mock('expo-router', () => ({ router: { replace: jest.fn() } }));
+jest.mock('expo-router', () => ({ router: { replace: jest.fn(), push: jest.fn() } }));
 
 const mockedUseFonts = jest.mocked(useFonts);
 const mockedSignIn = jest.mocked(signIn);
@@ -81,6 +81,26 @@ describe('écran de connexion', () => {
     fireEvent.press(screen.getByText('Se connecter'));
 
     await waitFor(() => expect(mockedSignIn).toHaveBeenCalled());
+    expect(mockedRouter.replace).not.toHaveBeenCalled();
+  });
+
+  it('ouvre l’écran de vérification 2FA quand le compte l’exige, au lieu d’afficher une erreur', async () => {
+    // Un compte avec la 2FA activée n'a pas échoué : un toast d'erreur ici bloquerait
+    // l'opérateur sans jamais lui permettre de saisir le code demandé.
+    mockedSignIn.mockRejectedValue(new ApiError('Code requis', 401, 'two_factor_required'));
+
+    render(<LoginScreen />);
+
+    fireEvent.changeText(screen.getByPlaceholderText(/prenom.nom/), 'op@nutrichain.local');
+    fireEvent.changeText(screen.getByPlaceholderText('••••••••'), 'motdepasse');
+    fireEvent.press(screen.getByText('Se connecter'));
+
+    await waitFor(() =>
+      expect(mockedRouter.push).toHaveBeenCalledWith({
+        pathname: '/verify-2fa',
+        params: { email: 'op@nutrichain.local' },
+      })
+    );
     expect(mockedRouter.replace).not.toHaveBeenCalled();
   });
 });

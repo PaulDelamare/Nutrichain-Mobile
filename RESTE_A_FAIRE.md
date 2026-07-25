@@ -72,8 +72,22 @@ liste à la main.
 
 Également assumés (à mettre dans un « Limitations connues » du README) : garde-fou de bilan matière
 (`RecipeComposition` inexploitable), maintenance/hygiène HACCP (table morte), historique thermique du
-camion (déclaré par le client), `PerformanceStat` (table morte), MFA non imposée, secret partagé
-entre capteurs, ABAC par site, rétention RGPD.
+camion (déclaré par le client), `PerformanceStat` (table morte), secret partagé entre capteurs, ABAC
+par site, rétention RGPD.
+
+~~MFA non imposée~~ — la 2FA (TOTP) est codée et vérifiée en conditions réelles (`/verify-2fa`,
+`expo start --web` contre l'API réelle, code TOTP calculé depuis le secret enrôlé).
+
+Un vrai bug a été trouvé et corrigé au passage : `apiClient` (axios) ne fixait pas
+`withCredentials`, donc la cible web héritait du défaut natif du navigateur (`false`) — le cookie
+`two_factor` posé à la connexion ne repartait jamais, et le défi échouait en boucle avec un code
+pourtant correct. Fixé (`withCredentials: true` explicite) et testé en re-jouant le parcours
+complet dans un navigateur réel.
+
+⚠️ **Non vérifié sur appareil/simulateur natif** (iOS/Android) — seule la cible web a été
+exercée. Le défaut natif de React Native pour `withCredentials` diffère de celui du navigateur,
+donc le mécanisme aurait pu fonctionner par accident sur native même sans ce correctif ; à
+confirmer sur un appareil réel avant de considérer TOUTES les cibles prouvées.
 
 ## 🎓 Soutenance — [le meilleur ratio effort/note](https://github.com/PaulDelamare/Nutrichain-Api/labels/soutenance)
 

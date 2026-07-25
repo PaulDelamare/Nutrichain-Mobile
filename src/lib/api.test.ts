@@ -1,7 +1,7 @@
 import { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from 'axios';
 import { router } from 'expo-router';
 
-import { apiClient, isAuthenticated, signIn, signOut } from './api';
+import { apiClient, isAuthenticated, signIn, signOut, verifyTwoFactorTotp } from './api';
 import { clearCache } from './cache';
 import { ApiError, getErrorMessage } from './errors';
 import { clearToken, clearUserId, getToken, getUserId, saveToken, saveUserId } from './session';
@@ -63,6 +63,13 @@ describe('configuration du client', () => {
       process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000'
     );
     expect(apiClient.defaults.timeout).toBe(30000);
+  });
+
+  it('envoie les cookies (défi 2FA) sans dépendre du défaut implicite de la plateforme', () => {
+    // Sans ce réglage explicite, la cible web héritait du défaut natif du navigateur (`false`) :
+    // le cookie `two_factor` posé à la connexion ne repartait jamais, et le défi 2FA échouait en
+    // boucle avec un code pourtant correct — un vrai bug, trouvé en testant `expo start --web`.
+    expect(apiClient.defaults.withCredentials).toBe(true);
   });
 
   it('envoie la clé API sur les routes d’authentification, qui l’exigent', async () => {
@@ -152,19 +159,13 @@ describe('signIn', () => {
     expect(session.saveToken).not.toHaveBeenCalled();
   });
 
-  it('échoue explicitement quand la réponse ne contient pas de jeton (2FA)', async () => {
-    respondWith(200, { twoFactorRedirect: true });
-
-    await expect(signIn('a@b.fr', 'password')).rejects.toMatchObject({ field: 'two_factor' });
-    expect(session.saveToken).not.toHaveBeenCalled();
-  });
-
-  it('annonce la 2FA sans la confondre avec un mot de passe erroné', async () => {
+  it('signale la 2FA requise sans la confondre avec un mot de passe erroné', async () => {
     respondWith(200, { twoFactorRedirect: true });
 
     const error = await signIn('a@b.fr', 'password').catch((e: unknown) => e);
 
-    expect(getErrorMessage(error)).toContain('Double authentification');
+    expect(error).toMatchObject({ field: 'two_factor_required' });
+    expect(session.saveToken).not.toHaveBeenCalled();
     expect(getErrorMessage(error)).not.toContain('mot de passe');
   });
 
@@ -172,6 +173,50 @@ describe('signIn', () => {
     respondWith(401, { message: 'Invalid email or password' });
 
     await expect(signIn('a@b.fr', 'wrong')).rejects.toMatchObject({ status: 401 });
+  });
+});
+
+describe('verifyTwoFactorTotp', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    session.getToken.mockResolvedValue(null);
+  });
+
+  it('appelle le même point de terminaison que la connexion initiale (deux usages, un seul endpoint)', async () => {
+    const request = respondWith(200, SIGN_IN_OK);
+
+    await verifyTwoFactorTotp('123456');
+
+    expect(request.lastConfig().url).toBe('/api/auth/two-factor/verify-totp');
+    expect(request.lastConfig().data).toBe(JSON.stringify({ code: '123456' }));
+  });
+
+  it('complète la session comme un signIn réussi (identité puis jeton)', async () => {
+    respondWith(200, SIGN_IN_OK);
+
+    await verifyTwoFactorTotp('123456');
+
+    expect(mockedClearCache).toHaveBeenCalled();
+    expect(session.saveUserId).toHaveBeenCalledWith('user-1');
+    expect(session.saveToken).toHaveBeenCalledWith('jwt-123');
+    const ordreIdentite = session.saveUserId.mock.invocationCallOrder[0];
+    const ordreJeton = session.saveToken.mock.invocationCallOrder[0];
+    expect(ordreIdentite).toBeLessThan(ordreJeton);
+  });
+
+  it('remonte une ApiError typée sur un code invalide', async () => {
+    respondWith(401, { message: 'Invalid code' });
+
+    await expect(verifyTwoFactorTotp('000000')).rejects.toMatchObject({ status: 401 });
+    expect(session.saveToken).not.toHaveBeenCalled();
+  });
+
+  it('envoie la clé API, comme toute route /api/auth/*', async () => {
+    const request = respondWith(200, SIGN_IN_OK);
+
+    await verifyTwoFactorTotp('123456');
+
+    expect(request.lastConfig().headers['x-api-key']).toBe(process.env.EXPO_PUBLIC_API_KEY ?? '');
   });
 });
 

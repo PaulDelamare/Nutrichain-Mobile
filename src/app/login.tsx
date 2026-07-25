@@ -21,6 +21,7 @@ import {
 import Toast from 'react-native-toast-message';
 
 import { signIn } from '@/lib/api';
+import { ApiError } from '@/lib/errors';
 import { BRAND, BRAND_GRADIENT } from '@/lib/theme';
 import { toastError } from '@/lib/toast';
 
@@ -59,6 +60,12 @@ export default function LoginScreen() {
       });
       router.replace('/(tabs)');
     } catch (err) {
+      // Un compte avec la 2FA activée n'a pas échoué : il attend son code. Un toast d'erreur ici
+      // laisserait l'opérateur bloqué sans jamais pouvoir saisir le code demandé.
+      if (err instanceof ApiError && err.field === 'two_factor_required') {
+        router.push({ pathname: '/verify-2fa', params: { email: email.trim() } });
+        return;
+      }
       // `visibilityTime: 4000` retiré : c'est déjà le défaut de la librairie.
       toastError('Erreur de connexion', err);
     } finally {
