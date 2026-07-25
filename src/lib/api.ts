@@ -19,6 +19,14 @@ export const apiClient = axios.create({
   // de mouvements, de maillons d'audit et un événement EPCIS. Abandonner à 10 s ferait croire à
   // un échec une opération que le serveur a commitée — et l'opérateur la resaisirait.
   timeout: 30000,
+  // Le défi 2FA (`/two-factor/verify-totp`) dépend d'un cookie posé par le serveur à la connexion
+  // (`two_factor`, signé, HttpOnly) et réémis par le client à l'appel suivant — sans alternative
+  // par le corps de la requête. Axios ne touche `withCredentials` que si la config le précise
+  // explicitement ; laissé à `undefined`, la cible web hérite du défaut natif du navigateur
+  // (`false`), et le cookie ne repart jamais : le défi échoue en boucle avec un code pourtant
+  // correct. La cible native (iOS/Android) a un défaut différent, mais rien ne garantit qu'il ne
+  // change pas d'une version RN à l'autre — on le fixe donc explicitement, sur les deux cibles.
+  withCredentials: true,
 });
 
 apiClient.interceptors.request.use(async (config) => {

@@ -65,6 +65,13 @@ describe('configuration du client', () => {
     expect(apiClient.defaults.timeout).toBe(30000);
   });
 
+  it('envoie les cookies (défi 2FA) sans dépendre du défaut implicite de la plateforme', () => {
+    // Sans ce réglage explicite, la cible web héritait du défaut natif du navigateur (`false`) :
+    // le cookie `two_factor` posé à la connexion ne repartait jamais, et le défi 2FA échouait en
+    // boucle avec un code pourtant correct — un vrai bug, trouvé en testant `expo start --web`.
+    expect(apiClient.defaults.withCredentials).toBe(true);
+  });
+
   it('envoie la clé API sur les routes d’authentification, qui l’exigent', async () => {
     const request = respondWith(200, {});
 
