@@ -48,11 +48,67 @@ describe('loadBatches', () => {
     expect(cache.writeCache).toHaveBeenCalledWith('batches', lots);
   });
 
+  /**
+   * 🔴 LE bug de l'issue #99. L'API a paginé `GET /traceability/batches` : `data.data` est passé
+   * d'un tableau à `{ data, pagination }`. Renvoyé tel quel, cet objet était typé `Batch[]` sans
+   * que rien ne le vérifie — `findBatchByCode` faisait `batches.find(...)` dessus et l'onglet Scan
+   * plantait pour tous les opérateurs, sans la moindre erreur TypeScript.
+   */
+  it('lit la réponse PAGINÉE de l’API, et n’en met en cache que les lots', async () => {
+    const lots = [batch()];
+    apiClient.get.mockResolvedValue({
+      data: { data: { data: lots, pagination: { page: 1, limit: 500, total: 342, totalPages: 1 } } },
+    });
+
+    await expect(loadBatches()).resolves.toEqual(lots);
+    expect(cache.writeCache).toHaveBeenCalledWith('batches', lots);
+  });
+
+  /**
+   * Un APK vit sa vie sur un téléphone : il n'est pas déployé avec l'API. Une application à jour
+   * peut donc parler à une API qui ne pagine pas encore — et l'inverse.
+   */
+  it('lit encore la réponse non paginée d’une API antérieure', async () => {
+    const lots = [batch()];
+    apiClient.get.mockResolvedValue({ data: { data: lots } });
+
+    await expect(loadBatches()).resolves.toEqual(lots);
+  });
+
+  it('demande le catalogue le plus large possible — hors réseau, il n’y a pas de repli serveur', async () => {
+    apiClient.get.mockResolvedValue({ data: { data: [] } });
+
+    await loadBatches();
+
+    expect(apiClient.get).toHaveBeenCalledWith('/api/traceability/batches', {
+      params: { limit: 500 },
+    });
+  });
+
+  it('ne met JAMAIS en cache autre chose qu’un tableau, même sur une réponse inattendue', async () => {
+    apiClient.get.mockResolvedValue({ data: { data: null } });
+
+    await expect(loadBatches()).resolves.toEqual([]);
+    expect(cache.writeCache).toHaveBeenCalledWith('batches', []);
+  });
+
   it('retombe sur le cache quand le réseau est coupé', async () => {
     apiClient.get.mockRejectedValue(new ApiError('Erreur réseau', 0));
     cache.readCache.mockResolvedValue([batch()]);
 
     await expect(loadBatches()).resolves.toHaveLength(1);
+  });
+
+  /**
+   * ⚠️ Le cache survit à une mise à jour de l'app. Une version antérieure y a pu déposer la réponse
+   * paginée entière ; la servir telle quelle ferait planter le scan hors réseau, là où l'opérateur
+   * n'a aucun recours.
+   */
+  it('refuse un cache empoisonné par une version antérieure plutôt que de le servir', async () => {
+    apiClient.get.mockRejectedValue(new ApiError('Erreur réseau', 0));
+    cache.readCache.mockResolvedValue({ data: [batch()], pagination: { total: 1 } });
+
+    await expect(loadBatches()).rejects.toThrow(ApiError);
   });
 });
 

@@ -176,7 +176,7 @@ export default function TransformationScreen() {
     const session = (scanSession.current += 1);
     setChecking(true);
 
-    // Le catalogue local ne porte que les 100 lots les plus récents : c'est le serveur qui tranche.
+    // Le catalogue local ne porte qu'une page du catalogue, la plus récente : le serveur tranche.
     // Sortir ici sur `batches.length === 0` (comme avant) court-circuitait le seul recours dans la
     // situation MÊME où il est indispensable.
     const found = await lookupBatch(code, batches);
