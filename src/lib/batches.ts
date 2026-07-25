@@ -67,14 +67,61 @@ export function blockingReason(batch: Batch): string | null {
   return null;
 }
 
+/**
+ * Taille de page demandée au catalogue — le plafond de volumétrie de l'API.
+ *
+ * Ce qui n'est pas dans cette liste n'est résolvable QUE par le serveur (`lookupBatch`), donc pas
+ * du tout dans une chambre froide. Chaque lot manquant ici est un « Lot inconnu » hors réseau sur
+ * une marchandise bien réelle : autant en emporter le maximum tant qu'on a du signal. La liste
+ * n'est jamais affichée — elle ne sert qu'à résoudre un code scanné — donc sa taille ne coûte
+ * rien à l'écran.
+ */
+const BATCH_CATALOG_LIMIT = 500;
+
+/**
+ * Le catalogue tel que l'API le renvoie — sous ses DEUX formes.
+ *
+ * `GET /api/traceability/batches` répondait par un tableau nu ; il est devenu paginé
+ * (`{ data, pagination }`, nutrichain-api#231). Une application mobile n'est pas déployée avec son
+ * API : un APK distribué sur un téléphone continue d'appeler la version qu'il trouve. Les deux
+ * formes doivent donc être lues, dans les deux sens de mise à jour.
+ */
+type BatchCatalogPayload =
+  | Batch[]
+  | { data?: Batch[]; pagination?: { total?: number } }
+  | null
+  | undefined;
+
+/**
+ * ⚠️ Ne renvoie JAMAIS autre chose qu'un tableau.
+ *
+ * `data.data` était renvoyé tel quel, typé `Batch[]` sans que rien ne le vérifie à l'exécution.
+ * Le jour où l'API a paginé, ce « tableau » est devenu un objet : `findBatchByCode` appelait
+ * `batches.find(...)` dessus et l'onglet Scan plantait, sans la moindre erreur TypeScript.
+ */
+function toBatchArray(payload: BatchCatalogPayload): Batch[] {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  return Array.isArray(payload?.data) ? payload.data : [];
+}
+
 export async function loadBatches(): Promise<Batch[]> {
   try {
-    const { data } = await apiClient.get<{ data: Batch[] }>('/api/traceability/batches');
-    await writeCache('batches', data.data);
-    return data.data;
+    const { data } = await apiClient.get<{ data: BatchCatalogPayload }>(
+      '/api/traceability/batches',
+      { params: { limit: BATCH_CATALOG_LIMIT } }
+    );
+    const batches = toBatchArray(data.data);
+
+    await writeCache('batches', batches);
+    return batches;
   } catch (error) {
-    const cached = await readCache<Batch[]>('batches');
-    if (cached) {
+    const cached = await readCache<BatchCatalogPayload>('batches');
+    // Le cache peut avoir été écrit par une version antérieure de l'app, qui y déposait la réponse
+    // paginée entière. On ne le sert pas tel quel : hors réseau, ce serait un plantage sans recours.
+    if (Array.isArray(cached)) {
       return cached;
     }
     throw error;
@@ -92,9 +139,9 @@ export async function loadBatches(): Promise<Batch[]> {
  * ⚠️ Le code BRUT est essayé en PREMIER, le décodé ensuite : le brut est la clé de nos données, le
  * décodage n'est qu'une interprétation.
  *
- * ⚠️ Portée : `batches` ne contient que les 100 lots les plus RÉCENTS (l'API plafonne). Cette
- * fonction ne peut donc PAS conclure « ce lot n'existe pas » — seul `lookupBatch`, qui interroge le
- * serveur en repli, en a le droit.
+ * ⚠️ Portée : `batches` ne contient qu'une PAGE du catalogue, la plus récente. Cette fonction ne
+ * peut donc PAS conclure « ce lot n'existe pas » — seul `lookupBatch`, qui interroge le serveur en
+ * repli, en a le droit.
  */
 export function findBatchByCode(code: string, batches: Batch[]): Batch | undefined {
   for (const needle of scanCandidates(code).map((value) => value.toLowerCase())) {
@@ -237,9 +284,9 @@ async function askServer(path: string, params?: Record<string, string>): Promise
  * même réponse.
  *
  * 1. La liste déjà chargée, si on en a une : instantané, et suffisant dans l'immense majorité des cas.
- * 2. Sinon le serveur. Indispensable : `GET /traceability/batches` est plafonné à 100 lots, donc un
- *    lot plus ancien (un ingrédient à longue conservation) était annoncé « inconnu » devant le
- *    camion alors qu'il est en stock, étiqueté par nous.
+ * 2. Sinon le serveur. Indispensable : `GET /traceability/batches` est paginé, donc un lot plus
+ *    ancien (un ingrédient à longue conservation) était annoncé « inconnu » devant le camion alors
+ *    qu'il est en stock, étiqueté par nous.
  */
 export async function lookupBatch(code: string, batches: Batch[] = []): Promise<BatchLookup> {
   const local = findBatchByCode(code, batches);
