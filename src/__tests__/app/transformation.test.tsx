@@ -131,7 +131,7 @@ describe('écran de transformation', () => {
     mockedLoadTransformationDraft.mockResolvedValue({
       cuve: { id: 'cuve-1', nom: 'Cuve Inox A', type: 'CUVE', qr_code_id: null, lieu: { nom: 'Atelier' } },
       parents: [
-        { batch: batch({ id: 'b-parent', lot_number: 'LOT-PARENT-9' }), quantity: '30', exhausted: false },
+        { batch: batch({ id: 'b-parent', lot_number: 'LOT-PARENT-9' }), quantity: '30' },
       ],
       productId: 'p-1',
       quantity: '25',

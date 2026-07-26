@@ -91,8 +91,14 @@ export const clearReceiptDraft = (): Promise<void> => clearDraft(KIND.receipt);
 export interface TransformationDraft {
   /** La cuve scannée, entière : la restaurer sans réseau ni re-scan. */
   cuve: Equipment | null;
-  /** Les lots parents scannés, avec leurs quantités prélevées et l'état « épuisé ». */
-  parents: { batch: Batch; quantity: string; exhausted: boolean }[];
+  /**
+   * Les lots parents scannés, avec leurs quantités prélevées.
+   *
+   * Plus d'`exhausted` depuis #98 : le serveur dérive l'épuisement du stock. Aucune migration à
+   * prévoir pour les brouillons déjà enregistrés — `loadDraft` fait un `JSON.parse` sans validation
+   * de forme, la clé en trop est simplement ignorée à la relecture.
+   */
+  parents: { batch: Batch; quantity: string }[];
   productId: string;
   quantity: string;
 }

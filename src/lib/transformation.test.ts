@@ -12,8 +12,8 @@ const VALID: TransformationInput = {
   quantity: '250',
   unit: 'KG',
   inputs: [
-    { batchId: 'b-1', quantity: '300', unit: 'L', exhausted: true, available: 400 },
-    { batchId: 'b-2', quantity: '5', unit: 'KG', exhausted: false, available: 10 },
+    { batchId: 'b-1', quantity: '300', unit: 'L', available: 400 },
+    { batchId: 'b-2', quantity: '5', unit: 'KG', available: 10 },
   ],
 };
 
@@ -25,10 +25,25 @@ describe('buildTransformation', () => {
       quantite_produite: 250,
       unite_code: 'KG',
       inputs: [
-        { id_lot_parent: 'b-1', quantite_prelevee: 300, unite: 'L', lot_parent_epuise: true },
-        { id_lot_parent: 'b-2', quantite_prelevee: 5, unite: 'KG', lot_parent_epuise: false },
+        { id_lot_parent: 'b-1', quantite_prelevee: 300, unite: 'L' },
+        { id_lot_parent: 'b-2', quantite_prelevee: 5, unite: 'KG' },
       ],
     });
+  });
+
+  /**
+   * #98 — Le serveur a cessé d'accepter `lot_parent_epuise` (API #123) : il dérive l'épuisement du
+   * stock réellement relu en base. Le champ était donc silencieusement jeté à chaque envoi.
+   * `toEqual` ci-dessus le verrouille déjà, mais cette assertion nomme la régression : si quelqu'un
+   * le réintroduit, l'échec dit pourquoi c'est faux plutôt que « objet inattendu ».
+   */
+  it("n'envoie plus lot_parent_epuise — le serveur le dérive du stock (#98)", () => {
+    const payload = buildTransformation(VALID);
+
+    for (const input of payload?.inputs ?? []) {
+      expect(input).not.toHaveProperty('lot_parent_epuise');
+    }
+    expect(JSON.stringify(payload)).not.toContain('lot_parent_epuise');
   });
 
   it('accepte la virgule décimale', () => {
@@ -38,7 +53,7 @@ describe('buildTransformation', () => {
   it('normalise en majuscules l’unité venue du lot', () => {
     // Les lots sont stockés en « kg » aussi bien qu'en « KG » : l'enum du serveur n'accepte que
     // la seconde forme. Sans normalisation, un lot en minuscules ferait rejeter tout l'envoi.
-    const inputs = [{ batchId: 'b-1', quantity: '3', unit: 'kg', exhausted: false, available: 10 }];
+    const inputs = [{ batchId: 'b-1', quantity: '3', unit: 'kg', available: 10 }];
 
     expect(buildTransformation({ ...VALID, unit: 'kg', inputs })).toMatchObject({
       unite_code: 'KG',
@@ -57,7 +72,7 @@ describe('buildTransformation', () => {
       batchId: `b-${index}`,
       quantity: '1',
       unit: 'KG',
-      exhausted: false,
+     
       available: 10,
     }));
 
@@ -81,19 +96,19 @@ describe('buildTransformation', () => {
   it('refuse un prélèvement supérieur au stock du lot', () => {
     // Le serveur refuse, mais son message contient l'UUID brut du lot : sur six parents,
     // l'opérateur ne saurait pas lequel corriger.
-    const inputs = [{ batchId: 'b-1', quantity: '500', unit: 'L', exhausted: false, available: 400 }];
+    const inputs = [{ batchId: 'b-1', quantity: '500', unit: 'L', available: 400 }];
 
     expect(buildTransformation({ ...VALID, inputs })).toBeNull();
   });
 
   it('refuse un lot parent dont la quantité prélevée est invalide', () => {
-    const inputs = [{ batchId: 'b-1', quantity: '0', unit: 'L', exhausted: false, available: 10 }];
+    const inputs = [{ batchId: 'b-1', quantity: '0', unit: 'L', available: 10 }];
 
     expect(buildTransformation({ ...VALID, inputs })).toBeNull();
   });
 
   it('refuse un lot parent sans identifiant', () => {
-    const inputs = [{ batchId: '', quantity: '3', unit: 'L', exhausted: false, available: 10 }];
+    const inputs = [{ batchId: '', quantity: '3', unit: 'L', available: 10 }];
 
     expect(buildTransformation({ ...VALID, inputs })).toBeNull();
   });
@@ -112,7 +127,7 @@ describe('buildTransformation', () => {
   it('refuse un lot parent dont l’unité est inconnue du serveur', () => {
     // `unite_code` est du texte libre à la réception : un lot peut naître en « U ». C'est la
     // SEULE garde qui empêche l'envoi de partir en 422 — elle doit être tenue par un test.
-    const inputs = [{ batchId: 'b-1', quantity: '3', unit: 'U', exhausted: false, available: 10 }];
+    const inputs = [{ batchId: 'b-1', quantity: '3', unit: 'U', available: 10 }];
 
     expect(buildTransformation({ ...VALID, inputs })).toBeNull();
   });

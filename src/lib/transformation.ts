@@ -26,12 +26,17 @@ export interface TransformationInput {
     batchId: string;
     quantity: string;
     unit: string;
-    exhausted: boolean;
     /** Stock restant du lot parent : au-delà, le serveur refuse le prélèvement. */
     available: number;
   }[];
 }
 
+/**
+ * Pas de `lot_parent_epuise` : depuis l'API #123, l'épuisement du lot parent est DÉRIVÉ du stock
+ * relu en base après prélèvement, il n'est plus déclaré par le client. Le champ ne figure plus dans
+ * le schéma VineJS du serveur, qui le jetait donc en silence à chaque envoi (#98). Le conserver
+ * laissait croire que le mobile décidait de l'épuisement — ce qui n'est plus vrai.
+ */
 export interface TransformationPayload {
   id_produit_fini: string;
   id_materiel: string;
@@ -41,7 +46,6 @@ export interface TransformationPayload {
     id_lot_parent: string;
     quantite_prelevee: number;
     unite: string;
-    lot_parent_epuise: boolean;
   }[];
 }
 
@@ -124,7 +128,6 @@ export function buildTransformation(input: TransformationInput): TransformationP
       id_lot_parent: item.batchId,
       quantite_prelevee: parseQuantity(item.quantity),
       unite: item.unit.toUpperCase(),
-      lot_parent_epuise: item.exhausted,
     })),
   };
 }

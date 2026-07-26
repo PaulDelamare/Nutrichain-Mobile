@@ -50,7 +50,6 @@ import { writeBlockedReason } from '@/lib/roles';
 interface ParentInput {
   batch: Batch;
   quantity: string;
-  exhausted: boolean;
 }
 
 type Scanning = 'cuve' | 'lot' | null;
@@ -231,7 +230,7 @@ export default function TransformationScreen() {
       return;
     }
 
-    setParents((current) => [...current, { batch, quantity: '', exhausted: false }]);
+    setParents((current) => [...current, { batch, quantity: '' }]);
   };
 
   const updateParent = (id: string, changes: Partial<ParentInput>) => {
@@ -249,7 +248,6 @@ export default function TransformationScreen() {
       batchId: parent.batch.id,
       quantity: parent.quantity,
       unit: parent.batch.unite_code,
-      exhausted: parent.exhausted,
       available: Number(parent.batch.quantite_actuelle),
     })),
   });
@@ -375,6 +373,10 @@ export default function TransformationScreen() {
                     </TouchableOpacity>
                   </View>
 
+                  {/* La puce « Épuisé » a été retirée (#98) : le serveur ne lit plus ce drapeau
+                      depuis l'API #123, il dérive l'épuisement du stock relu en base. L'opérateur
+                      appuyait donc sur un bouton sans effet. Le stock restant affiché au-dessus et
+                      le contrôle « Stock insuffisant » suffisent à l'informer. */}
                   <View style={styles.parentRow}>
                     <TextInput
                       style={[styles.input, styles.flex]}
@@ -383,17 +385,6 @@ export default function TransformationScreen() {
                       placeholder={`Quantité prélevée (${parent.batch.unite_code})`}
                       keyboardType="decimal-pad"
                     />
-                    <TouchableOpacity
-                      style={[styles.chip, parent.exhausted && styles.chipOn]}
-                      onPress={() =>
-                        updateParent(parent.batch.id, { exhausted: !parent.exhausted })
-                      }
-                      activeOpacity={0.8}
-                    >
-                      <Text style={[styles.chipText, parent.exhausted && styles.chipTextOn]}>
-                        Épuisé
-                      </Text>
-                    </TouchableOpacity>
                   </View>
 
                   {/* Le stock disponible est affiché juste au-dessus : laisser taper au-delà sans
@@ -578,16 +569,6 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   lockedUnitText: { fontSize: 15, fontWeight: '600', color: '#374151' },
-  chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  chipOn: { backgroundColor: BRAND.primary, borderColor: BRAND.primary },
-  chipText: { fontSize: 13, color: '#374151', fontWeight: '500' },
-  chipTextOn: { color: '#fff', fontWeight: '700' },
   submit: {
     backgroundColor: BRAND.primary,
     borderRadius: 12,
