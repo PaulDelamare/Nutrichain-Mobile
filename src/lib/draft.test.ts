@@ -154,7 +154,6 @@ const TRANSFO_DRAFT: TransformationDraft = {
         produit: { nom: 'Lait cru' },
       },
       quantity: '30',
-      exhausted: false,
     },
   ],
   productId: 'p-1',
