@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useAuthStatus } from '@/hooks/use-auth-status';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { useOnlineStatus, type OnlineStatus } from '@/hooks/use-online-status';
 import { loadActiveColdAlerts, type ColdAlerts } from '@/lib/alerts';
@@ -103,7 +104,10 @@ export default function HomeScreen() {
   const online = useOnlineStatus();
   // (issue #71) `null` tant que le rôle est inconnu (hors ligne, ou première réponse en vol) :
   // on n'accuse pas sans savoir, et on ne ferme surtout pas l'écriture sur une supposition.
-  const writeBlocked = writeBlockedReason(user?.role ?? null);
+  // `authentifie` distingue « rôle inconnu hors ligne » (permissif) de « aucune session »
+  // (jamais permissif) — cf. #102.
+  const authentifie = useAuthStatus() === 'authenticated';
+  const writeBlocked = writeBlockedReason(user?.role ?? null, authentifie);
   // ⚠️ TROIS états, jamais deux. « Je charge » et « je n'ai pas pu » ne sont PAS la même chose :
   // les confondre ferait clignoter un message d'échec à chaque ouverture de l'app — un mensonge
   // à l'envers. Et `0` n'est aucun des deux : un compteur initialisé à zéro affiche

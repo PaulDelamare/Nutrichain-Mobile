@@ -14,6 +14,9 @@ import ReceptionScreen from '@/app/reception';
 const mockParams = { current: {} as { code?: string } };
 
 jest.mock('@/lib/catalog');
+// Ces suites exercent les écrans AVEC une session : la garde de session est testée séparément
+// (`_layout.test.tsx`), et la sémantique de `canWrite` dans `roles.test.ts` (#102).
+jest.mock('@/hooks/use-auth-status', () => ({ useAuthStatus: () => 'authenticated' }));
 jest.mock('@/hooks/use-current-user');
 jest.mock('@/lib/equipment');
 jest.mock('@/lib/sync/queue');

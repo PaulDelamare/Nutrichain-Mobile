@@ -40,6 +40,7 @@ import type { ReceiptPayload } from '@/lib/sync/types';
 import { BRAND, HEADER_GRADIENT } from '@/lib/theme';
 import { toastError } from '@/lib/toast';
 import { AccessDenied } from '@/components/access-denied';
+import { useAuthStatus } from '@/hooks/use-auth-status';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { writeBlockedReason } from '@/lib/roles';
 
@@ -301,7 +302,10 @@ export default function ReceptionScreen() {
 
   // (issue #71) Garde À L'ENTRÉE, pas seulement sur l'accueil : sur le web, `/reception` s'ouvre
   // par URL directe. `null` (rôle inconnu, hors ligne) laisse passer — cf. `canWrite`.
-  const writeBlocked = writeBlockedReason(user?.role ?? null);
+  // `authentifie` distingue « rôle inconnu hors ligne » (permissif) de « aucune session »
+  // (jamais permissif) — cf. #102.
+  const authentifie = useAuthStatus() === 'authenticated';
+  const writeBlocked = writeBlockedReason(user?.role ?? null, authentifie);
   if (writeBlocked) {
     return <AccessDenied title="Réception" reason={writeBlocked} />;
   }
