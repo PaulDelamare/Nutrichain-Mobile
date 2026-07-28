@@ -40,21 +40,21 @@ describe('formatRole', () => {
  */
 describe('canWrite', () => {
   it('autorise les rôles d’écriture terrain', () => {
-    expect(canWrite('owner')).toBe(true);
-    expect(canWrite('admin')).toBe(true);
-    expect(canWrite('operator')).toBe(true);
+    expect(canWrite('owner', true)).toBe(true);
+    expect(canWrite('admin', true)).toBe(true);
+    expect(canWrite('operator', true)).toBe(true);
   });
 
   it('refuse le viewer et le quality — exclus des écritures côté API', () => {
     // ⚠️ Le mutant à tuer : inclure `quality` parce qu'il « a des droits ». Il en a d'AUTRES
     // (levée de quarantaine), mais pas l'écriture terrain — le serveur le refuse en 403.
-    expect(canWrite('viewer')).toBe(false);
-    expect(canWrite('quality')).toBe(false);
+    expect(canWrite('viewer', true)).toBe(false);
+    expect(canWrite('quality', true)).toBe(false);
   });
 
   it('refuse un rôle inconnu plutôt que de le supposer permissif', () => {
     // Un rôle que le mobile ne connaît pas n'est pas une raison d'ouvrir l'écriture.
-    expect(canWrite('chef_zone')).toBe(false);
+    expect(canWrite('chef_zone', true)).toBe(false);
   });
 
   /**
@@ -64,7 +64,33 @@ describe('canWrite', () => {
    * pas une frontière de sécurité : le serveur reste l'autorité et refuse en 403.
    */
   it('laisse passer quand le rôle est INCONNU, jamais l’inverse', () => {
-    expect(canWrite(null)).toBe(true);
+    expect(canWrite(null, true)).toBe(true);
+  });
+
+  /**
+   * #102 — `role === null` recouvrait DEUX états que la fonction ne distinguait pas : « on ne sait
+   * pas encore » (hors ligne, session valide) et « il n'y a aucune session ». Le premier justifie
+   * la permissivité ; le second, jamais. La garde de rôle « à l'entrée » que les écrans annoncent
+   * ne se déclenchait donc pas dans le seul cas où elle comptait vraiment.
+   *
+   * Le second paramètre est OBLIGATOIRE, et c'est le point : aucun appelant ne peut conserver
+   * l'ancien comportement par omission — TypeScript le force à trancher.
+   */
+  describe('sans session (#102)', () => {
+    it('refuse quand il n’y a aucune session, rôle inconnu', () => {
+      expect(canWrite(null, false)).toBe(false);
+    });
+
+    it('refuse même avec un rôle d’écriture en cache', () => {
+      // Un rôle mémorisé d'un opérateur précédent ne vaut pas session : l'appareil a été déconnecté.
+      expect(canWrite('operator', false)).toBe(false);
+      expect(canWrite('owner', false)).toBe(false);
+    });
+
+    it('préserve le confort hors ligne quand la session, elle, existe', () => {
+      // LE cas à ne pas casser : chambre froide, `/api/me` injoignable, rôle inconnu — on passe.
+      expect(canWrite(null, true)).toBe(true);
+    });
   });
 });
 
@@ -91,7 +117,18 @@ describe('canQuality', () => {
    */
   it('refuse quand le rôle est INCONNU, à l’inverse de canWrite', () => {
     expect(canQuality(null)).toBe(false);
-    expect(canWrite(null)).toBe(true);
+    expect(canWrite(null, true)).toBe(true);
+  });
+});
+
+describe('writeBlockedReason sans session (#102)', () => {
+  it('explique l’absence de session plutôt que d’inventer un rôle', () => {
+    // Sans ce cas, le message aurait affiché « Votre rôle (null) » : illisible, et faux.
+    const raison = writeBlockedReason(null, false);
+
+    expect(raison).not.toBeNull();
+    expect(raison).not.toContain('null');
+    expect(raison?.toLowerCase()).toContain('session');
   });
 });
 
@@ -120,14 +157,14 @@ describe('recallBlockedReason', () => {
 describe('writeBlockedReason', () => {
   it('nomme le rôle dans une PHRASE, pas le code brut', () => {
     // L'opérateur lit « Consultation », pas « viewer » — même exigence que `blockingReason`.
-    expect(writeBlockedReason('viewer')).toContain('Consultation');
+    expect(writeBlockedReason('viewer', true)).toContain('Consultation');
   });
 
   it('ne dit rien quand l’écriture est permise', () => {
-    expect(writeBlockedReason('operator')).toBeNull();
+    expect(writeBlockedReason('operator', true)).toBeNull();
   });
 
   it('ne dit rien quand le rôle est inconnu : on n’accuse pas sans savoir', () => {
-    expect(writeBlockedReason(null)).toBeNull();
+    expect(writeBlockedReason(null, true)).toBeNull();
   });
 });

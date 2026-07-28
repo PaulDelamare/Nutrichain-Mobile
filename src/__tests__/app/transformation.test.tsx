@@ -22,6 +22,9 @@ jest.mock('@/lib/batches', () => ({
 }));
 jest.mock('@/lib/catalog');
 jest.mock('@/lib/draft');
+// Ces suites exercent les écrans AVEC une session : la garde de session est testée séparément
+// (`_layout.test.tsx`), et la sémantique de `canWrite` dans `roles.test.ts` (#102).
+jest.mock('@/hooks/use-auth-status', () => ({ useAuthStatus: () => 'authenticated' }));
 jest.mock('@/hooks/use-current-user');
 jest.mock('@/lib/equipment', () => ({
   ...jest.requireActual('@/lib/equipment'),

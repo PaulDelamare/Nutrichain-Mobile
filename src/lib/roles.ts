@@ -43,8 +43,19 @@ export function formatRole(role: string): string {
  * réponse n'est pas revenue, il est inconnu. Refuser l'écriture dans ce cas enfermerait
  * l'opérateur là où l'application doit précisément servir — une panne bien pire que le bouton
  * trompeur qu'on corrige. On laisse donc passer : le serveur tranchera en 403, comme aujourd'hui.
+ *
+ * MAIS `role` valait aussi `null` quand il n'y a AUCUNE session, et la fonction ne distinguait pas
+ * les deux (#102). La permissivité s'appliquait donc au visiteur sans compte : la garde protégeait
+ * contre un `viewer` connecté, jamais contre quelqu'un qui n'a pas de session.
+ *
+ * `authenticated` sépare les deux états, et il est OBLIGATOIRE : aucun appelant ne peut conserver
+ * l'ancien comportement par omission, TypeScript le force à trancher.
  */
-export function canWrite(role: string | null): boolean {
+export function canWrite(role: string | null, authenticated: boolean): boolean {
+  if (!authenticated) {
+    return false;
+  }
+
   return role === null || WRITE_ROLES.includes(role);
 }
 
@@ -52,9 +63,14 @@ export function canWrite(role: string | null): boolean {
  * Pourquoi l'écriture est refusée, EN FRANÇAIS — ou `null` si elle est permise (ou indécidable).
  * Même contrat que `blockingReason` sur un lot : l'opérateur lit une phrase, jamais un code.
  */
-export function writeBlockedReason(role: string | null): string | null {
-  if (canWrite(role)) {
+export function writeBlockedReason(role: string | null, authenticated: boolean): string | null {
+  if (canWrite(role, authenticated)) {
     return null;
+  }
+
+  // Sans session, il n'y a pas de rôle à nommer : `formatRole(null)` afficherait « null ».
+  if (!authenticated) {
+    return 'Votre session a expiré. Reconnectez-vous pour enregistrer une opération.';
   }
 
   return `Votre rôle (${formatRole(role as string)}) ne permet pas d'enregistrer une opération. Demandez un accès opérateur.`;

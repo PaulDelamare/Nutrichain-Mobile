@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { useCurrentUser } from '@/hooks/use-current-user';
+import { useAuthStatus } from '@/hooks/use-auth-status';
 import Toast from 'react-native-toast-message';
 
 import ExpeditionScreen from '@/app/expedition';
@@ -22,6 +23,9 @@ jest.mock('@/lib/shipment', () => ({
   createShipment: jest.fn(),
 }));
 jest.mock('@/lib/draft');
+// Ces suites exercent les écrans AVEC une session : la garde de session est testée séparément
+// (`_layout.test.tsx`), et la sémantique de `canWrite` dans `roles.test.ts` (#102).
+jest.mock('@/hooks/use-auth-status');
 jest.mock('@/hooks/use-current-user');
 jest.mock('@/lib/toast');
 // La confirmation de succès passe par `Toast.show` (pas `toastMessage`) : on le capture pour vérifier
@@ -115,6 +119,9 @@ const mockedUser = jest.mocked(useCurrentUser);
 describe('écran d’expédition', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // Par défaut : session valide. Cette suite exerce l'écran tel qu'un opérateur connecté le
+    // voit ; l'absence de session a son propre test, plus bas.
+    jest.mocked(useAuthStatus).mockReturnValue('authenticated');
     mockedUser.mockReturnValue({ user: null, loading: false });
     mockedLookup.mockImplementation(resolveLocally);
     mockedLoadCustomers.mockResolvedValue([
@@ -391,6 +398,28 @@ describe('écran d’expédition', () => {
     render(<ExpeditionScreen />);
 
     expect(screen.getByText(/ne permet pas d’enregistrer|ne permet pas d'enregistrer/)).toBeTruthy();
+    expect(screen.queryByText(/Enregistrer l/)).toBeNull();
+  });
+
+  /**
+   * #102 — Test de CÂBLAGE : l'écran doit transmettre l'état de session RÉEL à `writeBlockedReason`,
+   * pas une constante. Sans lui, quelqu'un pourrait passer `true` en dur et le trou se rouvrirait
+   * sans qu'aucun test de `roles.ts` ne bronche.
+   *
+   * En production, la garde racine empêche déjà d'arriver ici sans session ; c'est la seconde
+   * ligne, celle qui tient si un autre chemin d'entrée apparaît.
+   */
+  it('n’offre pas le formulaire quand il n’y a aucune session', () => {
+    jest.mocked(useAuthStatus).mockReturnValue('unauthenticated');
+    // Rôle en cache d'un opérateur précédent : il ne vaut pas session.
+    mockedUser.mockReturnValue({
+      user: { id: 'u1', name: 'Olivia', email: 'o@n.local', role: 'operator', organizationId: 'o1' },
+      loading: false,
+    });
+
+    render(<ExpeditionScreen />);
+
+    expect(screen.getByText(/session a expiré/)).toBeTruthy();
     expect(screen.queryByText(/Enregistrer l/)).toBeNull();
   });
 });
