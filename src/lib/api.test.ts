@@ -1,7 +1,15 @@
 import { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from 'axios';
 import { router } from 'expo-router';
 
-import { apiClient, isAuthenticated, signIn, signOut, verifyTwoFactorTotp } from './api';
+import {
+  apiClient,
+  getAuthStatusSnapshot,
+  isAuthenticated,
+  signIn,
+  signOut,
+  subscribeToAuthStatus,
+  verifyTwoFactorTotp,
+} from './api';
 import { clearCache } from './cache';
 import { ApiError, getErrorMessage } from './errors';
 import { clearToken, clearUserId, getToken, getUserId, saveToken, saveUserId } from './session';
@@ -414,5 +422,76 @@ describe('isAuthenticated', () => {
     await isAuthenticated();
 
     expect(() => request.lastConfig()).toThrow(/Aucune requête/);
+  });
+});
+
+/**
+ * #105 — La garde de session de la racine (#103) ne se réévaluait qu'au MONTAGE, et
+ * `router.replace` ne remonte pas la racine : après une connexion réussie, le statut restait
+ * « non authentifié » et l'application repartait indéfiniment vers l'écran de connexion.
+ * Elle marchait avant #103 parce que la seule garde existante, celle de `(tabs)`, se remonte à
+ * la navigation.
+ *
+ * Le statut est donc désormais un ÉTAT OBSERVABLE, écrit ici — le seul endroit qui écrit la
+ * session — et lu de façon synchrone par le hook.
+ */
+describe('statut d’authentification observable (#105)', () => {
+  it('passe à authentifié dès qu’une connexion a écrit la session', async () => {
+    respondWith(200, SIGN_IN_OK);
+
+    await signIn('a@b.fr', 'password');
+
+    expect(getAuthStatusSnapshot()).toBe('authenticated');
+  });
+
+  it('passe à authentifié après la validation du second facteur', async () => {
+    respondWith(200, SIGN_IN_OK);
+
+    await verifyTwoFactorTotp('123456');
+
+    expect(getAuthStatusSnapshot()).toBe('authenticated');
+  });
+
+  it('repasse à non authentifié à la déconnexion', async () => {
+    respondWith(200, SIGN_IN_OK);
+    await signIn('a@b.fr', 'password');
+    respondWith(200, {});
+
+    await signOut();
+
+    expect(getAuthStatusSnapshot()).toBe('unauthenticated');
+  });
+
+  /**
+   * Une session expirée efface l'identité SANS passer par `clearSession` : sans notification ici,
+   * la garde croirait l'opérateur encore connecté et ne protégerait plus rien.
+   */
+  it('repasse à non authentifié quand une session expirée est rejetée (401)', async () => {
+    respondWith(200, SIGN_IN_OK);
+    await signIn('a@b.fr', 'password');
+    session.getToken.mockResolvedValue('jwt-123');
+    respondWith(401, { error: [{ field: 'auth', message: 'Session expirée' }] });
+
+    await expect(
+      apiClient.get('/api/me', { headers: { Authorization: 'Bearer jwt-123' } })
+    ).rejects.toThrow();
+
+    expect(getAuthStatusSnapshot()).toBe('unauthenticated');
+  });
+
+  it('prévient ses abonnés, et cesse dès qu’ils se désabonnent', async () => {
+    const listener = jest.fn();
+    const unsubscribe = subscribeToAuthStatus(listener);
+    respondWith(200, SIGN_IN_OK);
+
+    await signIn('a@b.fr', 'password');
+    expect(listener).toHaveBeenCalled();
+
+    unsubscribe();
+    listener.mockClear();
+    respondWith(200, {});
+    await signOut();
+
+    expect(listener).not.toHaveBeenCalled();
   });
 });
