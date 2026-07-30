@@ -15,13 +15,13 @@ liste à la main.
 
 ---
 
-## 🔴 Bloquant avant la soutenance
+## 🔴 Bloquant avant la mise en production
 
 ### API — [Nutrichain-Api](https://github.com/PaulDelamare/Nutrichain-Api/issues)
 
 | # | Le trou | Pourquoi c'est grave |
 | --- | --- | --- |
-| [#67](https://github.com/PaulDelamare/Nutrichain-Api/issues/67) | La chaîne d'audit WORM peut **forker** | Le bouton « vérifier l'intégrité » afficherait **« chaîne rompue »** devant le jury — et un fork est indiscernable d'une falsification |
+| [#67](https://github.com/PaulDelamare/Nutrichain-Api/issues/67) | La chaîne d'audit WORM peut **forker** | Le bouton « vérifier l'intégrité » afficherait **« chaîne rompue »** en démonstration — et un fork est indiscernable d'une falsification |
 | [#68](https://github.com/PaulDelamare/Nutrichain-Api/issues/68) | L'**alerte froid est avalée** (202 « succès » sur échec) | Les lots ne sont **pas mis en quarantaine**, ils restent expédiables — et le capteur croit avoir réussi |
 | [#70](https://github.com/PaulDelamare/Nutrichain-Api/issues/70) | `Location` et `Supplier` **incréables** | Aucune réception possible hors seed → pas de lot → pas de rappel. Cul-de-sac |
 | [#71](https://github.com/PaulDelamare/Nutrichain-Api/issues/71) | `Equipment.temp_actuelle` **jamais écrite** | Le frigo affichera **3,2 °C pendant l'alerte PANIC**. ~5 lignes : le meilleur rapport effort/effet qui reste |
@@ -65,7 +65,7 @@ liste à la main.
 [#34](https://github.com/PaulDelamare/Nutrichain-Mobile/issues/34) sur le web, la détection réseau ment ·
 [#35](https://github.com/PaulDelamare/Nutrichain-Mobile/issues/35) le cache catalogue n'expire jamais
 
-## ⚪ Assumé — à expliquer au jury, pas à coder
+## ⚪ Assumé — à documenter, pas à coder
 
 [Mobile #36](https://github.com/PaulDelamare/Nutrichain-Mobile/issues/36) — **la file hors-ligne ne couvre que les réceptions.**
 ⚠️ Ne **jamais** revendiquer « tout fonctionne hors ligne » : c'est faux.
@@ -89,12 +89,12 @@ exercée. Le défaut natif de React Native pour `withCredentials` diffère de ce
 donc le mécanisme aurait pu fonctionner par accident sur native même sans ce correctif ; à
 confirmer sur un appareil réel avant de considérer TOUTES les cibles prouvées.
 
-## 🎓 Soutenance — [le meilleur ratio effort/note](https://github.com/PaulDelamare/Nutrichain-Api/labels/soutenance)
+## 📄 Livrables documentaires — [le meilleur ratio effort/impact](https://github.com/PaulDelamare/Nutrichain-Api/labels/presentation-projet)
 
 [#80](https://github.com/PaulDelamare/Nutrichain-Api/issues/80) **tableau des KPI au mauvais format**
-(~30 min, zéro ligne de code — « Cadrage & choix » vaut **20 %**) ·
-[#81](https://github.com/PaulDelamare/Nutrichain-Api/issues/81) **le dossier coche ✅ des objectifs non atteints** ·
-[#82](https://github.com/PaulDelamare/Nutrichain-Api/issues/82) support d'oral + **répétition chronométrée** + plan B ·
+(~30 min, zéro ligne de code) ·
+[#81](https://github.com/PaulDelamare/Nutrichain-Api/issues/81) **la documentation coche ✅ des objectifs non atteints** ·
+[#82](https://github.com/PaulDelamare/Nutrichain-Api/issues/82) support de présentation + **répétition chronométrée** + plan B ·
 [#83](https://github.com/PaulDelamare/Nutrichain-Api/issues/83) DPIA ·
 [#84](https://github.com/PaulDelamare/Nutrichain-Api/issues/84) SIEM ·
 [#85](https://github.com/PaulDelamare/Nutrichain-Api/issues/85) dashboards ·
