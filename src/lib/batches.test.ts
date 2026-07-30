@@ -444,14 +444,56 @@ describe('lookupBatch — retrouver le lot scanné, où qu’il soit', () => {
     expect(apiClient.get).not.toHaveBeenCalled();
   });
 
-  // Un SSCC identifie un COLIS. L'envoyer au serveur ferait attendre l'opérateur pour rien — et,
-  // hors réseau, lui annoncerait « ce lot n'a pas pu être vérifié » sur un code qui ne peut
-  // structurellement PAS être un lot.
-  it('n’interroge pas le serveur pour un colis (SSCC)', async () => {
+  /**
+   * Un SSCC identifie un COLIS, pas un lot : il ne se cherche pas dans le catalogue. Mais il se
+   * RÉSOUT — c'est une de nos palettes, et nous savons ce qu'elle porte.
+   *
+   * Avant, cette branche rendait `unknown`, et l'onglet Scan interprète `unknown` comme « de la
+   * marchandise qui arrive » : scanner une palette que nous avons nous-mêmes étiquetée ouvrait un
+   * formulaire de RÉCEPTION, et la valider créait un doublon de stock.
+   */
+  it('résout la palette désignée par un SSCC au lieu de la donner pour inconnue', async () => {
+    apiClient.get.mockResolvedValue({
+      data: {
+        data: {
+          id: 'palette-1',
+          sscc: '376112345678901234',
+          contient_lot_rappele: false,
+          lots: [
+            { id: 'lot-1', numero_lot: '260729-AAAAAA', produit: 'Beurre', statut: 'EN_STOCK' },
+          ],
+        },
+      },
+    });
+
+    const found = await lookupBatch('00376112345678901234', []);
+
+    expect(found).toMatchObject({ kind: 'pallet', pallet: { sscc: '376112345678901234' } });
+    // L'AI est retiré : la route attend le SSCC, pas l'element string.
+    expect(apiClient.get).toHaveBeenCalledWith(
+      '/api/logistics/logistic-units/by-sscc/376112345678901234'
+    );
+  });
+
+  // Une palette FOURNISSEUR ne figure pas dans notre base : le 404 est la réponse normale, et c'est
+  // bien de la marchandise qui arrive. Le comportement historique reste juste — pour ce cas-là.
+  it('rend « inconnu » sur un SSCC que nous ne connaissons pas — c’est une réception', async () => {
+    apiClient.get.mockRejectedValue(new ApiError('Palette introuvable', 404, 'sscc'));
+
     const found = await lookupBatch('00376112345678901234', []);
 
     expect(found).toEqual({ kind: 'unknown' });
-    expect(apiClient.get).not.toHaveBeenCalled();
+  });
+
+  // Hors réseau, « inconnu » enverrait l'opérateur réceptionner une palette peut-être déjà en
+  // stock. Ne pas savoir doit se dire.
+  it('n’invente pas une réception quand la palette n’a pas pu être vérifiée', async () => {
+    const panne = new ApiError('Réseau', 0, 'network');
+    apiClient.get.mockRejectedValue(panne);
+
+    const found = await lookupBatch('00376112345678901234', []);
+
+    expect(found).toEqual({ kind: 'unverifiable', error: panne });
   });
 
   // Un seul aller-retour, toujours : le code brut et son interprétation ne diffèrent que si le code

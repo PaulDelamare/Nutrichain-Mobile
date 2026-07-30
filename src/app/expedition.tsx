@@ -157,6 +157,16 @@ export default function ExpeditionScreen() {
       return;
     }
 
+    // Une palette n'est pas un lot : l'expédition raisonne lot par lot. Le dire, plutôt que de
+    // laisser le scan sans effet — l'opérateur croirait à une étiquette illisible et rescannerait.
+    if (found.kind === 'pallet') {
+      toastMessage(
+        'Ceci est une palette',
+        `Elle porte ${found.pallet.lots.length} lot(s). Scannez leurs étiquettes une à une.`
+      );
+      return;
+    }
+
     const { batch } = found;
 
     // La garde sanitaire de sortie d'usine : un lot bloqué (non-conformité, excursion froid,

@@ -2,7 +2,7 @@ import { apiClient } from './api';
 import { serverNow } from './server-time';
 import { readCache, writeCache } from './cache';
 import { ApiError } from './errors';
-import { isPackageCode, LOT_NUMBER_MAX_LENGTH, scanCandidates } from './gs1';
+import { isPackageCode, LOT_NUMBER_MAX_LENGTH, parseScannedCode, scanCandidates } from './gs1';
 
 // ── Le catalogue des lots : ce qu'on scanne devant la cuve ou le camion ───────────────────────
 
@@ -252,17 +252,84 @@ function toBatch(b: BatchApi): Batch {
   };
 }
 
+/** Une palette et ce qu'elle porte, tels que le scan d'un SSCC les rend. */
+export interface PalletLot {
+  id: string;
+  numero_lot: string;
+  produit: string;
+  quantite?: number;
+  unite?: string;
+  statut: string;
+  date_peremption?: string | null;
+}
+
+export interface Pallet {
+  id: string;
+  sscc: string;
+  /** Un lot peut passer sous rappel APRÈS la palettisation : c'est ce que le quai doit voir. */
+  contient_lot_rappele: boolean;
+  lots: PalletLot[];
+}
+
 /**
- * Les trois issues d'un scan — et elles sont bien TROIS.
+ * Les issues d'un scan — et elles sont bien QUATRE.
  *
  * Confondre « ce lot n'existe pas » et « je n'ai pas pu le demander » est la faute qui revient sans
  * cesse ici : elle fait annoncer « Lot inconnu » sur une marchandise bien réelle, et pousse
- * l'opérateur à la resaisir.
+ * l'opérateur à la resaisir. Une palette est une quatrième issue : ce n'est ni un lot, ni une
+ * inconnue — c'est un contenant dont nous connaissons le contenu.
  */
 export type BatchLookup =
   | { kind: 'found'; batch: Batch }
+  | { kind: 'pallet'; pallet: Pallet }
   | { kind: 'unknown' }
   | { kind: 'unverifiable'; error: unknown };
+
+export type PalletResult =
+  | { kind: 'ok'; pallet: Pallet }
+  /** 404 : cette palette n'est pas la nôtre. Réponse DÉFINITIVE. */
+  | { kind: 'unknown' }
+  /** Réseau / 401 / 500 : on n'a pas pu demander. TRANSITOIRE — l'écran propose de réessayer. */
+  | { kind: 'unverifiable'; error: unknown };
+
+/**
+ * Charge une palette par son SSCC — sans son AI, c'est ce que la route attend.
+ *
+ * Ne rejette JAMAIS : comme `loadBatch`, l'incertitude est dans la valeur de retour. Un écran qui
+ * ne distingue pas « palette inconnue » de « je n'ai pas pu demander » annonce une palette vide
+ * sur une panne réseau, et l'opérateur la traite comme telle.
+ */
+export async function loadPallet(sscc: string): Promise<PalletResult> {
+  try {
+    const { data } = await apiClient.get<{ data: Pallet }>(
+      `/api/logistics/logistic-units/by-sscc/${sscc}`
+    );
+    return { kind: 'ok', pallet: data.data };
+  } catch (error: unknown) {
+    if (error instanceof ApiError && error.status === 404) {
+      return { kind: 'unknown' };
+    }
+    return { kind: 'unverifiable', error };
+  }
+}
+
+/**
+ * Résout le SSCC lu vers la palette qu'il désigne.
+ *
+ * Un 404 est une réponse, pas une panne : la palette d'un fournisseur n'est pas dans notre base, et
+ * c'est alors bien de la marchandise qui arrive. Tout le reste (réseau coupé, 401, 500) est une
+ * INCERTITUDE — l'avaler dans « inconnu » ferait proposer une réception sur une palette peut-être
+ * déjà en stock.
+ */
+async function lookupPallet(code: string): Promise<BatchLookup> {
+  const sscc = parseScannedCode(code).sscc;
+  if (!sscc) {
+    return { kind: 'unknown' };
+  }
+
+  const result = await loadPallet(sscc);
+  return result.kind === 'ok' ? { kind: 'pallet', pallet: result.pallet } : result;
+}
 
 async function askServer(path: string, params?: Record<string, string>): Promise<Batch | null> {
   try {
@@ -294,10 +361,11 @@ export async function lookupBatch(code: string, batches: Batch[] = []): Promise<
     return { kind: 'found', batch: local };
   }
 
-  // Un SSCC désigne un colis : il n'y a aucun lot à chercher, et l'annoncer « non vérifié » hors
-  // réseau serait un faux problème.
+  // Un SSCC désigne un colis : il n'y a aucun LOT à chercher, mais il y a une PALETTE à résoudre.
+  // La rendre « inconnue » envoyait l'opérateur en réception sur une palette que nous avons
+  // nous-mêmes montée et étiquetée — et valider créait un doublon de stock.
   if (isPackageCode(code)) {
-    return { kind: 'unknown' };
+    return lookupPallet(code);
   }
 
   // Une panne sur UN candidat ne doit pas enterrer le suivant : sinon une étiquette dont le code

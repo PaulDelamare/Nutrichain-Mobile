@@ -62,6 +62,36 @@ describe('écran de scan', () => {
     jest.spyOn(Linking, 'openSettings').mockResolvedValue(undefined);
   });
 
+  /**
+   * Scanner une palette que NOUS avons montée et étiquetée ouvrait un formulaire de RÉCEPTION :
+   * son SSCC retombait dans « inconnu », que cet écran interprète comme « marchandise qui
+   * arrive ». Valider aurait créé un doublon de stock sur de la marchandise déjà présente.
+   */
+  it('ouvre la PALETTE quand le code scanné est un SSCC que nous connaissons', async () => {
+    mockedLookup.mockResolvedValue({
+      kind: 'pallet',
+      pallet: {
+        id: 'palette-1',
+        sscc: '034567890000000606',
+        contient_lot_rappele: false,
+        lots: [],
+      },
+    } as Awaited<ReturnType<typeof lookupBatch>>);
+    render(<ScanScreen />);
+
+    mockOnBarcodeScanned.current?.({ data: '00034567890000000606' });
+
+    await waitFor(() => {
+      expect(mockedRouter.push).toHaveBeenCalledWith({
+        pathname: '/palette/[sscc]',
+        params: { sscc: '034567890000000606' },
+      });
+    });
+    expect(mockedRouter.push).not.toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: '/reception' })
+    );
+  });
+
   it('ouvre la FICHE du lot quand le lot scanné existe déjà', async () => {
     // Le geste le plus évident de la démo : scanner un lot en stock. Il ouvrait un formulaire de
     // RÉCEPTION — l'opérateur réceptionnait une seconde fois une palette déjà entrée.
