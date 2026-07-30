@@ -30,8 +30,8 @@ export function useAuthStatus(): AuthStatus {
     getAuthStatusSnapshot
   );
 
-  // Le coffre n'est lu qu'au démarrage. `resolveInitialAuthStatus` est idempotent : deux gardes
-  // montées en même temps ne le déclenchent qu'une fois.
+  // Le coffre n'est lu qu'au démarrage, et une seule fois : `resolveInitialAuthStatus` mémorise
+  // sa lecture, donc les trois gardes montées dans le même tour n'en déclenchent qu'une.
   useEffect(() => {
     void resolveInitialAuthStatus();
   }, []);

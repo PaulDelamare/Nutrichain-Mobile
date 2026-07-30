@@ -495,3 +495,134 @@ describe('statut d’authentification observable (#105)', () => {
     expect(listener).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Le statut de DÉMARRAGE, lu depuis le coffre. Chaque cas repart d'un module neuf : l'état est un
+ * état de module, et un `authenticated` posé par un test précédent rendrait ces assertions vraies
+ * sans rien prouver.
+ */
+describe('résolution du statut au démarrage (#105)', () => {
+  function moduleNeuf(): typeof import('./api') {
+    let api!: typeof import('./api');
+    jest.isolateModules(() => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      api = require('./api') as typeof import('./api');
+    });
+    return api;
+  }
+
+  it('part de « chargement » tant que le coffre n’a pas été lu', () => {
+    const api = moduleNeuf();
+
+    expect(api.getAuthStatusSnapshot()).toBe('loading');
+  });
+
+  it('devient « authentifié » quand le coffre porte une session', async () => {
+    session.getToken.mockResolvedValue('jwt-123');
+    session.getUserId.mockResolvedValue('user-1');
+    const api = moduleNeuf();
+
+    await api.resolveInitialAuthStatus();
+
+    expect(api.getAuthStatusSnapshot()).toBe('authenticated');
+  });
+
+  it('devient « non authentifié » quand le coffre est vide', async () => {
+    session.getToken.mockResolvedValue(null);
+    const api = moduleNeuf();
+
+    await api.resolveInitialAuthStatus();
+
+    expect(api.getAuthStatusSnapshot()).toBe('unauthenticated');
+  });
+
+  /**
+   * L'entrelacement qui compte : une connexion aboutit PENDANT la lecture du coffre. Sans la
+   * reprise de garde après l'attente, la lecture — commencée sur un coffre vide — écraserait la
+   * connexion, et l'opérateur repartirait vers l'écran de connexion juste après s'être connecté.
+   */
+  it('ne laisse pas la lecture du coffre écraser une connexion survenue entre-temps', async () => {
+    let libererLaLecture!: (token: string | null) => void;
+    // SEULE la lecture de démarrage est suspendue : la connexion lit elle aussi le coffre pour
+    // poser son en-tête. Tout suspendre figerait le test au lieu d'éprouver la course.
+    session.getToken.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          libererLaLecture = resolve;
+        })
+    );
+    session.getToken.mockResolvedValue('jwt-123');
+    const api = moduleNeuf();
+    api.apiClient.defaults.adapter = async (config) => ({
+      data: SIGN_IN_OK,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    });
+
+    const lecture = api.resolveInitialAuthStatus();
+    await api.signIn('a@b.fr', 'password');
+    expect(api.getAuthStatusSnapshot()).toBe('authenticated');
+
+    // Le coffre répond enfin, et il répond « vide » : son verdict est périmé.
+    libererLaLecture(null);
+    await lecture;
+
+    expect(api.getAuthStatusSnapshot()).toBe('authenticated');
+  });
+
+  it('ne relit plus le coffre une fois le statut connu', async () => {
+    session.getToken.mockResolvedValue('jwt-123');
+    session.getUserId.mockResolvedValue('user-1');
+    const api = moduleNeuf();
+    await api.resolveInitialAuthStatus();
+    session.getToken.mockClear();
+
+    await api.resolveInitialAuthStatus();
+
+    expect(session.getToken).not.toHaveBeenCalled();
+  });
+
+  it('ne lit le coffre qu’UNE fois quand plusieurs gardes montent en même temps', async () => {
+    session.getToken.mockResolvedValue('jwt-123');
+    session.getUserId.mockResolvedValue('user-1');
+    const api = moduleNeuf();
+
+    await Promise.all([
+      api.resolveInitialAuthStatus(),
+      api.resolveInitialAuthStatus(),
+      api.resolveInitialAuthStatus(),
+    ]);
+
+    expect(session.getToken).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Une session effacée ailleurs (autre onglet, coffre invalidé) : le coffre est vide, donc
+   * personne n'est connecté. Sans cette publication, le statut restait « authentifié » et plus
+   * aucun geste de l'application ne ramenait vers l'écran de connexion.
+   */
+  it('repasse à « non authentifié » sur un 401 alors que le coffre est déjà vide', async () => {
+    session.getToken.mockResolvedValue('jwt-123');
+    session.getUserId.mockResolvedValue('user-1');
+    const api = moduleNeuf();
+    await api.resolveInitialAuthStatus();
+    expect(api.getAuthStatusSnapshot()).toBe('authenticated');
+
+    session.getToken.mockResolvedValue(null);
+    api.apiClient.defaults.adapter = async (config) => {
+      throw new AxiosError('Unauthorized', undefined, config, undefined, {
+        data: { error: [{ field: 'auth', message: 'Session expirée' }] },
+        status: 401,
+        statusText: 'Unauthorized',
+        headers: {},
+        config,
+      });
+    };
+
+    await expect(api.apiClient.get('/api/me')).rejects.toThrow();
+
+    expect(api.getAuthStatusSnapshot()).toBe('unauthenticated');
+  });
+});

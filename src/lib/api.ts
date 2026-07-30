@@ -75,6 +75,14 @@ apiClient.interceptors.response.use(
       // déconnexion peut revenir en 401 longtemps après : sans cette comparaison, elle éjecterait
       // vers l'écran de connexion l'opérateur SUIVANT, en pleine saisie — pour une session qui
       // n'était même pas la sienne.
+      // Un coffre VIDE n'est pas une incertitude : c'est la preuve que personne n'est connecté
+      // localement. Sans cette publication, une session effacée ailleurs (autre onglet, coffre
+      // invalidé) laissait le statut à « authentifié » — la garde maintenait alors les écrans
+      // métier montés sur des données locales, et plus aucun geste ne ramenait à la connexion.
+      if (currentToken === null) {
+        setAuthStatus('unauthenticated');
+      }
+
       const concernsCurrentSession =
         currentToken !== null && rejectedToken === `Bearer ${currentToken}`;
 
@@ -161,13 +169,24 @@ export function getAuthStatusSnapshot(): AuthStatus {
  * font foi. La garde est reprise APRÈS l'attente — une connexion peut aboutir pendant la lecture,
  * et son résultat ne doit pas être écrasé par un coffre lu avant elle.
  */
+let initialResolution: Promise<void> | null = null;
+
 export async function resolveInitialAuthStatus(): Promise<void> {
   if (authStatus !== 'loading') return;
 
-  const authenticated = await isAuthenticated().catch(() => false);
-  if (authStatus !== 'loading') return;
+  // La lecture est mémorisée, pas seulement gardée par le statut : au démarrage à froid, la racine
+  // et les deux couches de `(tabs)` montent le hook dans le même tour et lanceraient TROIS lectures
+  // de coffre concurrentes — dont chacune peut effacer la session si elle la trouve à demi écrite.
+  initialResolution ??= (async () => {
+    const authenticated = await isAuthenticated().catch(() => false);
+    // Reprise de la garde APRÈS l'attente : une connexion, une déconnexion ou un 401 ont pu
+    // aboutir pendant la lecture, et c'est leur résultat qui fait foi.
+    if (authStatus === 'loading') {
+      setAuthStatus(authenticated ? 'authenticated' : 'unauthenticated');
+    }
+  })();
 
-  setAuthStatus(authenticated ? 'authenticated' : 'unauthenticated');
+  return initialResolution;
 }
 
 type SignInPayload = { token?: string; user?: { id: string } };

@@ -29,6 +29,22 @@ beforeEach(() => {
 });
 
 describe('useAuthStatus', () => {
+  /**
+   * ⚠️ CE test doit rester le PREMIER du fichier : c'est le seul moment où le magasin de statut,
+   * qui vit dans le module, n'a encore été écrit par personne. Les cas suivants se connectent ou se
+   * déconnectent, donc ils ne peuvent plus observer l'état de démarrage.
+   *
+   * Il prouve le câblage : sans la lecture déclenchée au montage, le statut resterait
+   * indéfiniment « chargement » — et la racine, qui ne monte pas le navigateur pendant ce
+   * chargement, n'ouvrirait JAMAIS l'application, même pour un opérateur déjà connecté.
+   */
+  it('déclenche la lecture du coffre au montage et quitte l’état chargement', async () => {
+    const { result } = renderHook(() => useAuthStatus());
+
+    expect(result.current).toBe('loading');
+    await waitFor(() => expect(result.current).toBe('authenticated'));
+  });
+
   it('rend le statut courant de la session', async () => {
     await signIn('operator@nutrichain.local', 'NutriChain!2026');
 
