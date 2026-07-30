@@ -75,6 +75,14 @@ apiClient.interceptors.response.use(
       // déconnexion peut revenir en 401 longtemps après : sans cette comparaison, elle éjecterait
       // vers l'écran de connexion l'opérateur SUIVANT, en pleine saisie — pour une session qui
       // n'était même pas la sienne.
+      // Un coffre VIDE n'est pas une incertitude : c'est la preuve que personne n'est connecté
+      // localement. Sans cette publication, une session effacée ailleurs (autre onglet, coffre
+      // invalidé) laissait le statut à « authentifié » — la garde maintenait alors les écrans
+      // métier montés sur des données locales, et plus aucun geste ne ramenait à la connexion.
+      if (currentToken === null) {
+        setAuthStatus('unauthenticated');
+      }
+
       const concernsCurrentSession =
         currentToken !== null && rejectedToken === `Bearer ${currentToken}`;
 
@@ -91,9 +99,13 @@ apiClient.interceptors.response.use(
       // prend un 401. Il est purgé à la connexion, quand on sait enfin QUI arrive.
       await clearToken();
       await clearUserId();
+      // Ce chemin n'appelle PAS `clearSession` : sans cette notification, la garde de session
+      // croirait l'opérateur encore connecté et ne protégerait plus aucun écran.
+      setAuthStatus('unauthenticated');
 
-      // Sans cette redirection, la session expirée laisse l'utilisateur sur des écrans
-      // vides : la garde de navigation ne se réévalue qu'au montage.
+      // La garde suffirait désormais à renvoyer vers la connexion. On la double d'une navigation
+      // explicite : elle est immédiate et déterministe, là où la garde attend un rendu — et les
+      // deux visent le même écran, donc elles ne peuvent pas se contredire.
       router.replace('/login');
     }
 
@@ -112,6 +124,69 @@ apiClient.interceptors.response.use(
 async function clearSession(): Promise<void> {
   await clearToken();
   await clearUserId();
+  setAuthStatus('unauthenticated');
+}
+
+export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
+
+/**
+ * Le statut de session, en ÉTAT OBSERVABLE — et il vit ICI parce que ce module est le seul à
+ * écrire la session, et le seul partagé par les deux plateformes (`session.ts` a un jumeau
+ * `session.web.ts` : y poser l'abonnement laisserait le web sans).
+ *
+ * L'instantané est SYNCHRONE, et jamais recalculé depuis le coffre après le démarrage. Recalculer
+ * à chaque écriture rouvrirait la course que `completeSession` prend soin d'éviter : l'identité
+ * s'écrit AVANT le jeton, donc une lecture déclenchée par la première écriture peut répondre
+ * « pas de jeton » APRÈS que la seconde a réussi — et re-figer l'application sur l'écran de
+ * connexion, par intermittence.
+ *
+ * `'loading'` est un état de DÉMARRAGE, jamais de transition : la racine ne monte pas le
+ * navigateur tant qu'il dure, donc y retourner démonterait la pile de navigation et la saisie en
+ * cours.
+ */
+let authStatus: AuthStatus = 'loading';
+const authStatusListeners = new Set<() => void>();
+
+function setAuthStatus(next: AuthStatus): void {
+  if (authStatus === next) return;
+  authStatus = next;
+  authStatusListeners.forEach((notify) => notify());
+}
+
+export function subscribeToAuthStatus(listener: () => void): () => void {
+  authStatusListeners.add(listener);
+  return () => {
+    authStatusListeners.delete(listener);
+  };
+}
+
+export function getAuthStatusSnapshot(): AuthStatus {
+  return authStatus;
+}
+
+/**
+ * Résout le statut au démarrage, depuis le coffre. Une seule fois : les écritures ultérieures
+ * font foi. La garde est reprise APRÈS l'attente — une connexion peut aboutir pendant la lecture,
+ * et son résultat ne doit pas être écrasé par un coffre lu avant elle.
+ */
+let initialResolution: Promise<void> | null = null;
+
+export async function resolveInitialAuthStatus(): Promise<void> {
+  if (authStatus !== 'loading') return;
+
+  // La lecture est mémorisée, pas seulement gardée par le statut : au démarrage à froid, la racine
+  // et les deux couches de `(tabs)` montent le hook dans le même tour et lanceraient TROIS lectures
+  // de coffre concurrentes — dont chacune peut effacer la session si elle la trouve à demi écrite.
+  initialResolution ??= (async () => {
+    const authenticated = await isAuthenticated().catch(() => false);
+    // Reprise de la garde APRÈS l'attente : une connexion, une déconnexion ou un 401 ont pu
+    // aboutir pendant la lecture, et c'est leur résultat qui fait foi.
+    if (authStatus === 'loading') {
+      setAuthStatus(authenticated ? 'authenticated' : 'unauthenticated');
+    }
+  })();
+
+  return initialResolution;
 }
 
 type SignInPayload = { token?: string; user?: { id: string } };
@@ -137,6 +212,9 @@ async function completeSession(data: SignInPayload): Promise<void> {
     await clearUserId();
     throw error;
   }
+
+  // Une seule notification, à la FIN : la session n'est complète qu'une fois le jeton posé.
+  setAuthStatus('authenticated');
 }
 
 export async function signIn(email: string, password: string): Promise<void> {

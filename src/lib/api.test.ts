@@ -1,7 +1,15 @@
 import { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from 'axios';
 import { router } from 'expo-router';
 
-import { apiClient, isAuthenticated, signIn, signOut, verifyTwoFactorTotp } from './api';
+import {
+  apiClient,
+  getAuthStatusSnapshot,
+  isAuthenticated,
+  signIn,
+  signOut,
+  subscribeToAuthStatus,
+  verifyTwoFactorTotp,
+} from './api';
 import { clearCache } from './cache';
 import { ApiError, getErrorMessage } from './errors';
 import { clearToken, clearUserId, getToken, getUserId, saveToken, saveUserId } from './session';
@@ -414,5 +422,207 @@ describe('isAuthenticated', () => {
     await isAuthenticated();
 
     expect(() => request.lastConfig()).toThrow(/Aucune requête/);
+  });
+});
+
+/**
+ * #105 — La garde de session de la racine (#103) ne se réévaluait qu'au MONTAGE, et
+ * `router.replace` ne remonte pas la racine : après une connexion réussie, le statut restait
+ * « non authentifié » et l'application repartait indéfiniment vers l'écran de connexion.
+ * Elle marchait avant #103 parce que la seule garde existante, celle de `(tabs)`, se remonte à
+ * la navigation.
+ *
+ * Le statut est donc désormais un ÉTAT OBSERVABLE, écrit ici — le seul endroit qui écrit la
+ * session — et lu de façon synchrone par le hook.
+ */
+describe('statut d’authentification observable (#105)', () => {
+  it('passe à authentifié dès qu’une connexion a écrit la session', async () => {
+    respondWith(200, SIGN_IN_OK);
+
+    await signIn('a@b.fr', 'password');
+
+    expect(getAuthStatusSnapshot()).toBe('authenticated');
+  });
+
+  it('passe à authentifié après la validation du second facteur', async () => {
+    respondWith(200, SIGN_IN_OK);
+
+    await verifyTwoFactorTotp('123456');
+
+    expect(getAuthStatusSnapshot()).toBe('authenticated');
+  });
+
+  it('repasse à non authentifié à la déconnexion', async () => {
+    respondWith(200, SIGN_IN_OK);
+    await signIn('a@b.fr', 'password');
+    respondWith(200, {});
+
+    await signOut();
+
+    expect(getAuthStatusSnapshot()).toBe('unauthenticated');
+  });
+
+  /**
+   * Une session expirée efface l'identité SANS passer par `clearSession` : sans notification ici,
+   * la garde croirait l'opérateur encore connecté et ne protégerait plus rien.
+   */
+  it('repasse à non authentifié quand une session expirée est rejetée (401)', async () => {
+    respondWith(200, SIGN_IN_OK);
+    await signIn('a@b.fr', 'password');
+    session.getToken.mockResolvedValue('jwt-123');
+    respondWith(401, { error: [{ field: 'auth', message: 'Session expirée' }] });
+
+    await expect(
+      apiClient.get('/api/me', { headers: { Authorization: 'Bearer jwt-123' } })
+    ).rejects.toThrow();
+
+    expect(getAuthStatusSnapshot()).toBe('unauthenticated');
+  });
+
+  it('prévient ses abonnés, et cesse dès qu’ils se désabonnent', async () => {
+    const listener = jest.fn();
+    const unsubscribe = subscribeToAuthStatus(listener);
+    respondWith(200, SIGN_IN_OK);
+
+    await signIn('a@b.fr', 'password');
+    expect(listener).toHaveBeenCalled();
+
+    unsubscribe();
+    listener.mockClear();
+    respondWith(200, {});
+    await signOut();
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Le statut de DÉMARRAGE, lu depuis le coffre. Chaque cas repart d'un module neuf : l'état est un
+ * état de module, et un `authenticated` posé par un test précédent rendrait ces assertions vraies
+ * sans rien prouver.
+ */
+describe('résolution du statut au démarrage (#105)', () => {
+  function moduleNeuf(): typeof import('./api') {
+    let api!: typeof import('./api');
+    jest.isolateModules(() => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      api = require('./api') as typeof import('./api');
+    });
+    return api;
+  }
+
+  it('part de « chargement » tant que le coffre n’a pas été lu', () => {
+    const api = moduleNeuf();
+
+    expect(api.getAuthStatusSnapshot()).toBe('loading');
+  });
+
+  it('devient « authentifié » quand le coffre porte une session', async () => {
+    session.getToken.mockResolvedValue('jwt-123');
+    session.getUserId.mockResolvedValue('user-1');
+    const api = moduleNeuf();
+
+    await api.resolveInitialAuthStatus();
+
+    expect(api.getAuthStatusSnapshot()).toBe('authenticated');
+  });
+
+  it('devient « non authentifié » quand le coffre est vide', async () => {
+    session.getToken.mockResolvedValue(null);
+    const api = moduleNeuf();
+
+    await api.resolveInitialAuthStatus();
+
+    expect(api.getAuthStatusSnapshot()).toBe('unauthenticated');
+  });
+
+  /**
+   * L'entrelacement qui compte : une connexion aboutit PENDANT la lecture du coffre. Sans la
+   * reprise de garde après l'attente, la lecture — commencée sur un coffre vide — écraserait la
+   * connexion, et l'opérateur repartirait vers l'écran de connexion juste après s'être connecté.
+   */
+  it('ne laisse pas la lecture du coffre écraser une connexion survenue entre-temps', async () => {
+    let libererLaLecture!: (token: string | null) => void;
+    // SEULE la lecture de démarrage est suspendue : la connexion lit elle aussi le coffre pour
+    // poser son en-tête. Tout suspendre figerait le test au lieu d'éprouver la course.
+    session.getToken.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          libererLaLecture = resolve;
+        })
+    );
+    session.getToken.mockResolvedValue('jwt-123');
+    const api = moduleNeuf();
+    api.apiClient.defaults.adapter = async (config) => ({
+      data: SIGN_IN_OK,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    });
+
+    const lecture = api.resolveInitialAuthStatus();
+    await api.signIn('a@b.fr', 'password');
+    expect(api.getAuthStatusSnapshot()).toBe('authenticated');
+
+    // Le coffre répond enfin, et il répond « vide » : son verdict est périmé.
+    libererLaLecture(null);
+    await lecture;
+
+    expect(api.getAuthStatusSnapshot()).toBe('authenticated');
+  });
+
+  it('ne relit plus le coffre une fois le statut connu', async () => {
+    session.getToken.mockResolvedValue('jwt-123');
+    session.getUserId.mockResolvedValue('user-1');
+    const api = moduleNeuf();
+    await api.resolveInitialAuthStatus();
+    session.getToken.mockClear();
+
+    await api.resolveInitialAuthStatus();
+
+    expect(session.getToken).not.toHaveBeenCalled();
+  });
+
+  it('ne lit le coffre qu’UNE fois quand plusieurs gardes montent en même temps', async () => {
+    session.getToken.mockResolvedValue('jwt-123');
+    session.getUserId.mockResolvedValue('user-1');
+    const api = moduleNeuf();
+
+    await Promise.all([
+      api.resolveInitialAuthStatus(),
+      api.resolveInitialAuthStatus(),
+      api.resolveInitialAuthStatus(),
+    ]);
+
+    expect(session.getToken).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Une session effacée ailleurs (autre onglet, coffre invalidé) : le coffre est vide, donc
+   * personne n'est connecté. Sans cette publication, le statut restait « authentifié » et plus
+   * aucun geste de l'application ne ramenait vers l'écran de connexion.
+   */
+  it('repasse à « non authentifié » sur un 401 alors que le coffre est déjà vide', async () => {
+    session.getToken.mockResolvedValue('jwt-123');
+    session.getUserId.mockResolvedValue('user-1');
+    const api = moduleNeuf();
+    await api.resolveInitialAuthStatus();
+    expect(api.getAuthStatusSnapshot()).toBe('authenticated');
+
+    session.getToken.mockResolvedValue(null);
+    api.apiClient.defaults.adapter = async (config) => {
+      throw new AxiosError('Unauthorized', undefined, config, undefined, {
+        data: { error: [{ field: 'auth', message: 'Session expirée' }] },
+        status: 401,
+        statusText: 'Unauthorized',
+        headers: {},
+        config,
+      });
+    };
+
+    await expect(api.apiClient.get('/api/me')).rejects.toThrow();
+
+    expect(api.getAuthStatusSnapshot()).toBe('unauthenticated');
   });
 });
