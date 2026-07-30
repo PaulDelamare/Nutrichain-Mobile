@@ -203,6 +203,16 @@ export default function TransformationScreen() {
       return;
     }
 
+    // Une palette n'est pas un ingrédient : la transformation consomme des lots, un par un. Le
+    // dire, plutôt que de laisser le scan sans effet devant la cuve.
+    if (found.kind === 'pallet') {
+      toastMessage(
+        'Ceci est une palette',
+        `Elle porte ${found.pallet.lots.length} lot(s). Scannez leurs étiquettes une à une.`
+      );
+      return;
+    }
+
     const { batch } = found;
 
     // La garde sanitaire, annoncée DEVANT la cuve : un lot en quarantaine ou périmé ne doit jamais

@@ -77,6 +77,14 @@ export default function ScanScreen() {
       return;
     }
 
+    // Une palette que NOUS avons montée et étiquetée. Sans ce cas, son SSCC retombait dans
+    // « inconnu » et l'application proposait de la RÉCEPTIONNER : valider aurait créé un doublon
+    // de stock sur de la marchandise déjà présente.
+    if (found.kind === 'pallet') {
+      router.push({ pathname: '/palette/[sscc]', params: { sscc: found.pallet.sscc } });
+      return;
+    }
+
     if (found.kind === 'unknown') {
       // Le serveur a répondu, et il ne connaît pas ce lot : c'est une marchandise qui arrive.
       goToReception();
