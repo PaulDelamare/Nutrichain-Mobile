@@ -178,6 +178,9 @@ interface BatchApi {
   date_peremption: string | null;
   date_creation: string | null;
   produit?: { nom: string; code_gtin?: string | null } | null;
+  /** Joints par `GET /logistics/batches/:id` — absents des listes, d'où l'optionalité. */
+  id_materiel_actuel?: string | null;
+  materiel?: { nom: string } | null;
 }
 
 export interface BatchDetail {
@@ -190,6 +193,12 @@ export interface BatchDetail {
   uniteCode: string;
   datePeremption: string | null;
   dateCreation: string | null;
+  /**
+   * Emplacement actuel. `null` tant que le lot n'a pas été rangé — et un lot sans emplacement
+   * n'est ciblé par aucune quarantaine froid, qui bloque les lots d'un matériel donné.
+   */
+  currentEquipmentId: string | null;
+  currentEquipmentName: string | null;
 }
 
 function toBatchDetail(b: BatchApi): BatchDetail {
@@ -204,6 +213,8 @@ function toBatchDetail(b: BatchApi): BatchDetail {
     uniteCode: b.unite_code,
     datePeremption: b.date_peremption,
     dateCreation: b.date_creation,
+    currentEquipmentId: b.id_materiel_actuel ?? null,
+    currentEquipmentName: b.materiel?.nom ?? null,
   };
 }
 

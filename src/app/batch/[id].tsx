@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
+import { BatchStorage } from '@/components/batch-storage';
 import { ShelfWithdrawals } from '@/components/shelf-withdrawals';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { useOnlineStatus } from '@/hooks/use-online-status';
@@ -225,10 +226,18 @@ function Fiche({
         <Row label="GTIN produit" value={batch.codeGtin ?? '—'} />
         <Row label="Date de péremption" value={formatDate(batch.datePeremption)} />
         <Row label="Créé le" value={formatDate(batch.dateCreation)} />
+        <Row label="Emplacement" value={batch.currentEquipmentName ?? "Non range"} />
         <Row label="Identifiant lot" value={batch.id} />
       </View>
 
       <Actions batch={batch} onRecalled={onRecalled} />
+
+      {/* Ranger le lot : geste le plus courant du terrain, et il conditionne la quarantaine froid. */}
+      <BatchStorage
+        batchId={batch.id}
+        currentEquipmentId={batch.currentEquipmentId}
+        onMoved={onRecalled}
+      />
 
       {/* Seconde moitie du rappel : ce que les magasins ont retire de leur rayon. */}
       <ShelfWithdrawals batchId={batch.id} />
