@@ -52,6 +52,8 @@ const DETAIL = {
   uniteCode: 'kg',
   datePeremption: null,
   dateCreation: null,
+  currentEquipmentId: null,
+  currentEquipmentName: null,
 };
 
 describe('fiche lot', () => {
