@@ -97,6 +97,27 @@ export function canQuality(role: string | null): boolean {
  * rôle non vérifié doit le dire, et non accuser l'utilisateur d'un manque de droits qu'on n'a
  * pas pu constater.
  */
+/**
+ * Retrait en magasin : tous les roles SAUF la lecture seule. Miroir exact de la garde API.
+ *
+ * Plus large que le rappel a dessein — declarer un retrait est un FAIT rapporte par un magasin,
+ * pas une decision qualite : l operateur qui prend l appel doit pouvoir l enregistrer. Et comme
+ * pour le rappel, TROIS etats : un role non verifie ne dit pas la meme chose qu un role refuse.
+ */
+const SHELF_WITHDRAWAL_ROLES = [...QUALITY_ROLES, 'operator'];
+
+export function shelfWithdrawalBlockedReason(role: string | null): string | null {
+  if (role === null) {
+    return 'Role non verifie : impossible de confirmer que vous pouvez enregistrer un retrait. Verifiez votre connexion.';
+  }
+
+  if (SHELF_WITHDRAWAL_ROLES.includes(role)) {
+    return null;
+  }
+
+  return `Votre role (${formatRole(role)}) est en lecture seule : il ne permet pas d enregistrer un retrait en magasin.`;
+}
+
 export function recallBlockedReason(role: string | null): string | null {
   if (role === null) {
     return "Rôle non vérifié : impossible de confirmer que vous pouvez déclencher un rappel. Vérifiez votre connexion.";

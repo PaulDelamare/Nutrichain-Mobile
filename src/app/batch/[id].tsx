@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
+import { ShelfWithdrawals } from '@/components/shelf-withdrawals';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { loadBatch, type BatchDetail, type BatchDetailResult } from '@/lib/batches';
@@ -228,6 +229,9 @@ function Fiche({
       </View>
 
       <Actions batch={batch} onRecalled={onRecalled} />
+
+      {/* Seconde moitie du rappel : ce que les magasins ont retire de leur rayon. */}
+      <ShelfWithdrawals batchId={batch.id} />
     </ScrollView>
   );
 }
