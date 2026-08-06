@@ -9,6 +9,7 @@ import { router } from 'expo-router';
 import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -92,7 +93,12 @@ export default function LoginScreen() {
         >
           {/* Logo */}
           <View style={styles.logoContainer}>
-            <Text style={styles.logoLetter}>N</Text>
+            <Image
+              source={require('../../assets/images/nutrichain-logo.png')}
+              style={styles.logoImage}
+              resizeMode="contain"
+              accessibilityLabel="NutriChain"
+            />
           </View>
 
           {/* App title */}
@@ -205,20 +211,20 @@ const styles = StyleSheet.create({
 
   /* Logo */
   logoContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    width: 72,
+    height: 72,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.20)',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
+    overflow: 'hidden',
   },
-  logoLetter: {
-    fontSize: 26,
-    fontFamily: 'Rajdhani_700Bold',
-    color: '#ffffff',
+  logoImage: {
+    width: 56,
+    height: 56,
   },
 
   /* Title */
